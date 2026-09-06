@@ -41,7 +41,6 @@ def carregar_dados():
     df['Data da Visita'] = pd.to_datetime(df['Data da Visita'], format='%d/%m/%Y', errors='coerce')
     df['Previsão de Conclusão'] = pd.to_datetime(df['Previsão de Conclusão'], format='%d/%m/%Y', errors='coerce')
     
-    # Garantir que a coluna Subárea exista para não quebrar o código caso a planilha ainda não tenha sido atualizada
     if 'Subárea' not in df.columns:
         df['Subárea'] = '-'
         
@@ -89,6 +88,7 @@ st.divider()
 # 6. Gráficos Interativos (Layout 2x2)
 st.subheader("📈 Análise de Área e Produção")
 cor_status = {"Resolvido": "#1B7543", "Em Andamento": "#4DA8DA", "Não Iniciado": "#A8B2C1", "Pausado": "#FF9F43", "Aguardando Terceiros": "#EA5455", "Agendado": "#836AF9"}
+cor_bases = {"Macaé/RJ": "#1B7543", "Gradim - São Gonçalo/RJ": "#4DA8DA", "Porto do Açu - São João da Barra/RJ": "#FF9F43"}
 
 linha1_col1, linha1_col2 = st.columns(2)
 
@@ -111,10 +111,17 @@ linha2_col1, linha2_col2 = st.columns(2)
 
 with linha2_col1:
     st.markdown("**Volume de Atividades por Subárea (Mapeamento Interno)**")
-    contagem_sub = df_filtrado["Subárea"].value_counts().reset_index()
-    contagem_sub.columns = ["Subárea", "Quantidade"]
-    fig_sub = px.bar(contagem_sub, x="Subárea", y="Quantidade", text_auto=True, color_discrete_sequence=["#1B7543"])
-    fig_sub.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", font=dict(color="white"), xaxis_title="", yaxis_title="Tarefas", margin=dict(t=10, b=10))
+    # AGRUPAMENTO DUPLO: Conta as tarefas separando por Subárea e Base
+    contagem_sub = df_filtrado.groupby(["Subárea", "Base"]).size().reset_index(name="Quantidade")
+    
+    # color="Base" faz a mágica de empilhar as cores mantendo a mesma coluna "Geral"
+    fig_sub = px.bar(contagem_sub, x="Subárea", y="Quantidade", color="Base", text_auto=True, color_discrete_map=cor_bases)
+    
+    fig_sub.update_layout(
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", font=dict(color="white"), 
+        xaxis_title="", yaxis_title="Tarefas", margin=dict(t=10, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, title="")
+    )
     st.plotly_chart(fig_sub, use_container_width=True)
 
 with linha2_col2:
