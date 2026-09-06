@@ -91,25 +91,30 @@ with col_filtro2:
 df_filtrado = df.query("Base in @base_selecionada and Status in @status_selecionado").copy()
 st.divider()
 
-# 4. Gestão do Contrato (Visitas Físicas)
+# 4. Gestão do Contrato (Visitas Físicas com % de Meta)
 st.subheader("📊 Cumprimento do Contrato Anual (Visitas Físicas)")
 col_meta1, col_meta2 = st.columns(2)
 hoje = pd.Timestamp.now().normalize()
+
 df_visitas_realizadas = df.dropna(subset=['Data da Visita'])
 df_visitas_realizadas = df_visitas_realizadas[df_visitas_realizadas['Data da Visita'] <= hoje]
 
 visitas_macae = df_visitas_realizadas[df_visitas_realizadas['Base'].str.contains('Macaé', na=False)]['Data da Visita'].nunique()
 visitas_inter = df_visitas_realizadas[~df_visitas_realizadas['Base'].str.contains('Macaé', na=False)]['Data da Visita'].nunique()
 
+perc_macae = min((visitas_macae / 104) * 100, 100)
+perc_inter = min((visitas_inter / 12) * 100, 100)
+
 with col_meta1:
-    st.metric("📍 Visitas Macaé (Meta: 104/ano)", f"{visitas_macae} realizadas")
+    st.metric("📍 Visitas Macaé (Meta: 104/ano)", f"{visitas_macae} realizadas ({perc_macae:.1f}% da meta)")
     st.progress(min(visitas_macae / 104, 1.0))
+
 with col_meta2:
-    st.metric("📍 Visitas Gradim/Açu (Meta: 12/ano)", f"{visitas_inter} realizadas")
+    st.metric("📍 Visitas Gradim/Açu (Meta: 12/ano)", f"{visitas_inter} realizadas ({perc_inter:.1f}% da meta)")
     st.progress(min(visitas_inter / 12, 1.0))
 st.divider()
 
-# 5. KPIs (Corrigido para "Atividades Concluídas")
+# 5. KPIs
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("🚨 Atendimentos Emergenciais", len(df_filtrado[df_filtrado["Prioridade"] == "Emergencial"]))
 col2.metric("✅ Atividades Concluídas", len(df_filtrado[df_filtrado["Status"] == "Resolvido"]))
@@ -174,7 +179,7 @@ def formatar_tabelas(df_temp):
 df_futuro = formatar_tabelas(df_futuro)
 df_principal = formatar_tabelas(df_principal)
 
-# 8. HISTÓRICO EXPANSÍVEL (Com Descrição e Observações Detalhadas)
+# 8. HISTÓRICO EXPANSÍVEL
 st.subheader("📋 Histórico e Execução")
 st.markdown("Clique em uma tarefa abaixo para ver os detalhes, observações de campo e a **Linha do Tempo (Diário de Bordo)**.")
 
@@ -214,9 +219,29 @@ else:
                     st.write(f"↳ {hist_row['Descrição do que aconteceu']}")
                     st.write("") 
 
-# 9. Agenda Futura
+# 9. NOVO: Cronograma Cronológico de Visitas (Agenda e Pins de Análise)
 st.divider()
-st.subheader("📅 Planejamento e Agenda Futura")
+st.subheader("🗓️ Cronograma e Linha do Tempo de Visitas")
+st.markdown("Visão cronológica de todas as visitas técnicas programadas e realizadas.")
+
+# Cria um dataframe específico ordenado por data de visita
+df_cronograma = df.dropna(subset=['Data da Visita']).copy()
+if df_cronograma.empty:
+    st.info("Nenhuma visita técnica com data registrada no momento.")
+else:
+    df_cronograma = df_cronograma.sort_values(by='Data da Visita')
+    for _, cron_row in df_cronograma.iterrows():
+        d_visita = cron_row['Data da Visita']
+        # Pin verde se já passou ou é hoje, pin azul se for futura
+        pin = "✅ **[Realizada]**" if d_visita <= hoje else "📅 **[Programada]**"
+        data_str = d_visita.strftime('%d/%m/%Y')
+        
+        st.markdown(f"{pin} **{data_str}** — **{cron_row['Base']}** | *{cron_row['Categoria']}* ({cron_row['Subárea']})")
+        st.caption(f"Escopo: {cron_row['Descrição']}")
+        st.markdown("---")
+
+# 10. Agenda Futura
+st.subheader("📅 Planejamento e Prazos Futuros")
 if df_futuro.empty:
     st.info("Nenhuma atividade futura agendada no momento.")
 else:
