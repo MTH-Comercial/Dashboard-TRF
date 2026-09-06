@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# 1. Configuração e Identidade Visual
+# 1. Configuração e Identidade Visual (Sem barra lateral)
 st.set_page_config(page_title="Painel Transforma | Mothé Engenharia", layout="wide", page_icon="⚡", initial_sidebar_state="collapsed")
 
 st.markdown("""
@@ -10,22 +10,24 @@ st.markdown("""
     .main {background-color: #0E1117;}
     h1, h2, h3, h4 {color: #4DA8DA;}
     .stProgress > div > div > div > div {background-color: #1B7543;}
+    /* Esconde o botão de abrir a barra lateral para um visual mais limpo */
     [data-testid="collapsedControl"] {display: none;}
     </style>
     """, unsafe_allow_html=True)
 
-# Topo com Logos
-col_logo1, col_titulo, col_logo2 = st.columns([1, 4, 1])
-with col_logo1:
-    try: st.image("Mothé Eng. Logo.png", width=90)
-    except: st.write("⚡ Mothé")
-with col_titulo:
-    st.markdown("<h1 style='text-align: center; margin-bottom: 0;'>Painel de Engenharia | Transforma</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #A8B2C1; margin-top: 0;'><b>Mothé Engenharia</b> - Gestão de Contrato e Acompanhamento Técnico</p>", unsafe_allow_html=True)
-with col_logo2:
-    try: st.image("images.png", width=140)
-    except: st.write("♻️ Transforma")
-st.divider()
+# Topo com Estilo CSS Integrado (Cartão Premium)
+st.markdown("""
+    <div style="background: linear-gradient(90deg, rgba(14,17,23,1) 0%, rgba(30,38,56,1) 50%, rgba(14,17,23,1) 100%);
+                padding: 40px 20px;
+                border-radius: 15px;
+                border-bottom: 3px solid #4DA8DA;
+                text-align: center;
+                margin-bottom: 30px;
+                box-shadow: 0px 4px 15px rgba(0, 0, 0, 0.5);">
+        <h1 style="color: white; margin-bottom: 0px; font-size: 3.2rem;">Painel de Engenharia <span style="color: #4DA8DA;">|</span> <span style="color: #1B7543;">Transforma</span></h1>
+        <p style="color: #A8B2C1; font-size: 1.2rem; margin-top: 10px;"><b>Mothé Engenharia</b> - Gestão de Contrato e Acompanhamento Técnico</p>
+    </div>
+""", unsafe_allow_html=True)
 
 # 2. Conectando com o Google Sheets (Lendo as DUAS abas)
 @st.cache_data(ttl=30)
@@ -35,7 +37,7 @@ def carregar_dados():
     url_principal = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=1562629984"
     df = pd.read_csv(url_principal)
     
-    # Aba 2: Diário de Bordo
+    # Aba 2: Diário de Bordo (Com o seu GID)
     GID_DIARIO = "997870532" 
     url_diario = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID_DIARIO}"
     df_diario = pd.read_csv(url_diario)
@@ -66,7 +68,7 @@ st.divider()
 # 4. Gestão do Contrato (Visitas Físicas)
 st.subheader("📊 Cumprimento do Contrato Anual (Visitas Físicas)")
 col_meta1, col_meta2 = st.columns(2)
-# Conta apenas visitas que já aconteceram (Data da Visita <= Hoje)
+# Conta apenas visitas que já aconteceram
 hoje = pd.Timestamp.now().normalize()
 df_visitas_realizadas = df.dropna(subset=['Data da Visita'])
 df_visitas_realizadas = df_visitas_realizadas[df_visitas_realizadas['Data da Visita'] <= hoje]
@@ -132,7 +134,7 @@ def calcular_progresso(fase):
     if fase == "Concluído": return 100
     return 0
 
-# REGRA NOVA: É planejamento futuro se a Data de Início for amanhã em diante, OU se a prioridade for Planejamento
+# REGRA: É planejamento futuro se a Data de Início for amanhã em diante, OU se a prioridade for Planejamento
 mask_futuro = (df_filtrado['Data de Início'] > hoje) | (df_filtrado['Prioridade'] == "Planejamento (Futuro)")
 
 df_futuro = df_filtrado[mask_futuro].copy()
