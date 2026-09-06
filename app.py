@@ -11,7 +11,6 @@ st.set_page_config(page_title="Painel Transforma | Mothé Engenharia", layout="w
 params = st.query_params
 
 if "autenticado" not in st.session_state:
-    # Se o link já tiver o passe livre, mantém logado
     if params.get("auth") == "true":
         st.session_state["autenticado"] = True
     else:
@@ -27,10 +26,8 @@ if not st.session_state["autenticado"]:
     with col_login:
         senha_digitada = st.text_input("Senha de Acesso:", type="password")
         if st.button("Entrar no Painel", use_container_width=True):
-            # VVV --- SUA SENHA --- VVV
             if senha_digitada == "Transforma2026": 
                 st.session_state["autenticado"] = True
-                # Carimba o navegador para o F5 não pedir senha de novo
                 st.query_params["auth"] = "true"
                 st.rerun()
             else:
@@ -38,8 +35,6 @@ if not st.session_state["autenticado"]:
     
     st.stop() 
 # ==========================================
-
-# A partir daqui, o site está liberado!
 
 st.markdown("""
     <style>
@@ -114,10 +109,10 @@ with col_meta2:
     st.progress(min(visitas_inter / 12, 1.0))
 st.divider()
 
-# 5. KPIs
+# 5. KPIs (Corrigido para "Atividades Concluídas")
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("🚨 Atendimentos Emergenciais", len(df_filtrado[df_filtrado["Prioridade"] == "Emergencial"]))
-col2.metric("✅ Projetos Concluídos", len(df_filtrado[df_filtrado["Status"] == "Resolvido"]))
+col2.metric("✅ Atividades Concluídas", len(df_filtrado[df_filtrado["Status"] == "Resolvido"]))
 col3.metric("⏳ Em Andamento", len(df_filtrado[df_filtrado["Status"] == "Em Andamento"]))
 col4.metric("⏸️ Pausados/Aguardando", len(df_filtrado[df_filtrado["Status"].isin(["Pausado", "Aguardando Terceiros"])]))
 
@@ -173,15 +168,15 @@ def formatar_tabelas(df_temp):
     df_temp['Data de Início'] = df_temp['Data de Início'].dt.strftime('%d/%m/%Y').fillna('-')
     df_temp['Data da Visita'] = df_temp['Data da Visita'].dt.strftime('%d/%m/%Y').fillna('Remoto/Escritório')
     df_temp['Previsão de Conclusão'] = df_temp['Previsão de Conclusão'].dt.strftime('%d/%m/%Y').fillna('Contínuo / A definir')
-    df_temp['Pendências/Observações'] = df_temp['Pendências/Observações'].fillna('Nenhuma observação principal.')
+    df_temp['Pendências/Observações'] = df_temp['Pendências/Observações'].fillna('Nenhuma observação registrada.')
     return df_temp
 
 df_futuro = formatar_tabelas(df_futuro)
 df_principal = formatar_tabelas(df_principal)
 
-# 8. HISTÓRICO EXPANSÍVEL
+# 8. HISTÓRICO EXPANSÍVEL (Com Descrição e Observações Detalhadas)
 st.subheader("📋 Histórico e Execução")
-st.markdown("Clique em uma tarefa abaixo para ver os detalhes e a **Linha do Tempo (Diário de Bordo)**.")
+st.markdown("Clique em uma tarefa abaixo para ver os detalhes, observações de campo e a **Linha do Tempo (Diário de Bordo)**.")
 
 if df_principal.empty:
     st.info("Nenhuma atividade encontrada com os filtros atuais.")
@@ -200,14 +195,17 @@ else:
                 st.markdown(f"**Fase Atual:** {row['Fase']}")
                 st.progress(row['Progresso'] / 100)
             with col_detalhe2:
-                st.markdown(f"**📝 Descrição Inicial / Escopo:**")
+                st.markdown(f"**📝 Descrição Resumida:**")
                 st.info(row['Descrição'])
+                st.markdown(f"**💬 Relato Detalhado / Observações de Campo:**")
+                st.success(row['Pendências/Observações'])
+                
             st.divider()
             
-            st.markdown("### 📜 Linha do Tempo (Atualizações)")
+            st.markdown("### 📜 Linha do Tempo (Atualizações do Diário)")
             historico_tarefa = df_diario[df_diario["ID da Tarefa"] == id_tarefa].copy()
             if historico_tarefa.empty:
-                st.warning("Nenhuma atualização registrada no Diário de Bordo para esta tarefa.")
+                st.warning("Nenhuma atualização extra registrada no Diário de Bordo para esta tarefa.")
             else:
                 historico_tarefa = historico_tarefa.sort_values(by="Data da Atualização", ascending=False)
                 for _, hist_row in historico_tarefa.iterrows():
