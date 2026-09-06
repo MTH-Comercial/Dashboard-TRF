@@ -5,17 +5,15 @@ import plotly.express as px
 # 1. Configuração e Identidade Visual
 st.set_page_config(page_title="Painel Transforma | Mothé Engenharia", layout="wide", page_icon="⚡")
 
-# Cores: Azul Mothé (#4DA8DA) e Verde Transforma (#1B7543)
 st.markdown("""
     <style>
     .main {background-color: #0E1117;}
     h1, h2, h3, h4 {color: #4DA8DA;}
-    /* Pinta as barras de progresso do contrato com o Verde da Transforma */
     .stProgress > div > div > div > div {background-color: #1B7543;}
     </style>
     """, unsafe_allow_html=True)
 
-# Topo com Logos Duplas e Título
+# Topo com Logos
 col_logo1, col_titulo, col_logo2 = st.columns([1, 4, 1])
 with col_logo1:
     try:
@@ -27,7 +25,7 @@ with col_titulo:
     st.markdown("<p style='text-align: center; color: #A8B2C1;'><b>Mothé Engenharia</b> - Gestão de Contrato e Acompanhamento Técnico</p>", unsafe_allow_html=True)
 with col_logo2:
     try:
-        st.image("images.png", width=140) # Logo da Transforma
+        st.image("images.png", width=140)
     except:
         st.write("♻️ Transforma")
 st.divider()
@@ -42,6 +40,11 @@ def carregar_dados():
     df['Data de Início'] = pd.to_datetime(df['Data de Início'], format='%d/%m/%Y', errors='coerce')
     df['Data da Visita'] = pd.to_datetime(df['Data da Visita'], format='%d/%m/%Y', errors='coerce')
     df['Previsão de Conclusão'] = pd.to_datetime(df['Previsão de Conclusão'], format='%d/%m/%Y', errors='coerce')
+    
+    # Garantir que a coluna Subárea exista para não quebrar o código caso a planilha ainda não tenha sido atualizada
+    if 'Subárea' not in df.columns:
+        df['Subárea'] = '-'
+        
     return df
 
 df = carregar_dados()
@@ -58,7 +61,7 @@ with st.sidebar:
 
 df_filtrado = df.query("Base in @base_selecionada and Status in @status_selecionado").copy()
 
-# 4. Gestão do Contrato (Visitas Físicas)
+# 4. Gestão do Contrato (Visitas)
 st.subheader("📊 Cumprimento do Contrato Anual (Visitas Físicas)")
 col_meta1, col_meta2 = st.columns(2)
 
@@ -75,58 +78,54 @@ with col_meta2:
     st.progress(min(visitas_inter / 12, 1.0))
 st.divider()
 
-# 5. Indicadores Rápidos (KPIs)
+# 5. KPIs
 col1, col2, col3, col4 = st.columns(4)
-emergenciais = len(df_filtrado[df_filtrado["Prioridade"] == "Emergencial"])
-concluidas = len(df_filtrado[df_filtrado["Status"] == "Resolvido"])
-em_andamento = len(df_filtrado[df_filtrado["Status"] == "Em Andamento"])
-pausadas = len(df_filtrado[df_filtrado["Status"].isin(["Pausado", "Aguardando Terceiros"])])
-
-col1.metric("🚨 Atendimentos Emergenciais", emergenciais)
-col2.metric("✅ Projetos Concluídos", concluidas)
-col3.metric("⏳ Em Andamento", em_andamento)
-col4.metric("⏸️ Pausados/Aguardando", pausadas)
+col1.metric("🚨 Atendimentos Emergenciais", len(df_filtrado[df_filtrado["Prioridade"] == "Emergencial"]))
+col2.metric("✅ Projetos Concluídos", len(df_filtrado[df_filtrado["Status"] == "Resolvido"]))
+col3.metric("⏳ Em Andamento", len(df_filtrado[df_filtrado["Status"] == "Em Andamento"]))
+col4.metric("⏸️ Pausados/Aguardando", len(df_filtrado[df_filtrado["Status"].isin(["Pausado", "Aguardando Terceiros"])]))
 st.divider()
 
-# 6. INTELIGÊNCIA VISUAL: Gráficos Interativos
-st.subheader("📈 Análise Gráfica")
-col_g1, col_g2, col_g3 = st.columns(3)
+# 6. Gráficos Interativos (Layout 2x2)
+st.subheader("📈 Análise de Área e Produção")
+cor_status = {"Resolvido": "#1B7543", "Em Andamento": "#4DA8DA", "Não Iniciado": "#A8B2C1", "Pausado": "#FF9F43", "Aguardando Terceiros": "#EA5455", "Agendado": "#836AF9"}
 
-# Paleta de cores semântica para os status
-cor_status = {
-    "Resolvido": "#1B7543", # Verde Transforma
-    "Em Andamento": "#4DA8DA", # Azul Mothé
-    "Não Iniciado": "#A8B2C1", # Cinza
-    "Pausado": "#FF9F43", # Laranja
-    "Aguardando Terceiros": "#EA5455", # Vermelho
-    "Agendado": "#836AF9" # Roxo
-}
+linha1_col1, linha1_col2 = st.columns(2)
 
-with col_g1:
-    st.markdown("**Distribuição por Status**")
+with linha1_col1:
+    st.markdown("**Distribuição por Status Geral**")
     fig_status = px.pie(df_filtrado, names="Status", hole=0.4, color="Status", color_discrete_map=cor_status)
-    fig_status.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", font=dict(color="white"), showlegend=False)
+    fig_status.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", font=dict(color="white"), showlegend=False, margin=dict(t=10, b=10))
     fig_status.update_traces(textposition='inside', textinfo='percent+label')
     st.plotly_chart(fig_status, use_container_width=True)
 
-with col_g2:
-    st.markdown("**Status por Unidade (Gargalos)**")
-    # Gráfico de barras agrupadas para comparar as bases
-    fig_base = px.histogram(df_filtrado, x="Base", color="Status", barmode="group", color_discrete_map=cor_status)
-    fig_base.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", font=dict(color="white"), xaxis_title="", yaxis_title="Quantidade", legend_title="")
-    st.plotly_chart(fig_base, use_container_width=True)
-
-with col_g3:
-    st.markdown("**Volume por Categoria**")
+with linha1_col2:
+    st.markdown("**Volume por Categoria de Engenharia**")
     contagem_cat = df_filtrado["Categoria"].value_counts().reset_index()
     contagem_cat.columns = ["Categoria", "Quantidade"]
     fig_cat = px.bar(contagem_cat, x="Quantidade", y="Categoria", orientation='h', text_auto=True, color_discrete_sequence=["#4DA8DA"])
-    fig_cat.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", font=dict(color="white"), xaxis_title="", yaxis_title="", yaxis=dict(autorange="reversed"))
+    fig_cat.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", font=dict(color="white"), xaxis_title="", yaxis_title="", yaxis=dict(autorange="reversed"), margin=dict(t=10, b=10))
     st.plotly_chart(fig_cat, use_container_width=True)
+
+linha2_col1, linha2_col2 = st.columns(2)
+
+with linha2_col1:
+    st.markdown("**Volume de Atividades por Subárea (Mapeamento Interno)**")
+    contagem_sub = df_filtrado["Subárea"].value_counts().reset_index()
+    contagem_sub.columns = ["Subárea", "Quantidade"]
+    fig_sub = px.bar(contagem_sub, x="Subárea", y="Quantidade", text_auto=True, color_discrete_sequence=["#1B7543"])
+    fig_sub.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", font=dict(color="white"), xaxis_title="", yaxis_title="Tarefas", margin=dict(t=10, b=10))
+    st.plotly_chart(fig_sub, use_container_width=True)
+
+with linha2_col2:
+    st.markdown("**Gargalos por Base Principal**")
+    fig_base = px.histogram(df_filtrado, x="Base", color="Status", barmode="group", color_discrete_map=cor_status)
+    fig_base.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", font=dict(color="white"), xaxis_title="", yaxis_title="Quantidade", legend_title="", margin=dict(t=10, b=10))
+    st.plotly_chart(fig_base, use_container_width=True)
 
 st.divider()
 
-# 7. Preparando os Dados para as Tabelas
+# 7. Tabelas e Progresso
 def calcular_progresso(fase):
     fase = str(fase).strip()
     if fase == "Levantamento em Campo": return 25
@@ -144,10 +143,10 @@ df_filtrado['Previsão de Conclusão'] = df_filtrado['Previsão de Conclusão'].
 df_futuro = df_filtrado[df_filtrado["Prioridade"] == "Planejamento (Futuro)"]
 df_principal = df_filtrado[df_filtrado["Prioridade"] != "Planejamento (Futuro)"]
 
-# 8. Tabela de Execução (Com Barra Animada)
+# 8. Tabela Principal (Agora exibindo a Subárea)
 st.subheader("📋 Histórico e Execução")
 st.dataframe(
-    df_principal[["Data de Início", "Data da Visita", "Base", "Categoria", "Descrição", "Fase", "Progresso", "Status", "Pendências/Observações"]],
+    df_principal[["Data de Início", "Data da Visita", "Base", "Subárea", "Categoria", "Descrição", "Fase", "Progresso", "Status", "Pendências/Observações"]],
     column_config={
         "Progresso": st.column_config.ProgressColumn("Avanço", help="Progresso baseado na fase", format="%d%%", min_value=0, max_value=100)
     },
@@ -159,4 +158,4 @@ st.subheader("📅 Planejamento e Agenda Futura")
 if df_futuro.empty:
     st.info("Nenhuma atividade futura agendada no momento.")
 else:
-    st.dataframe(df_futuro[["Data de Início", "Base", "Categoria", "Descrição", "Status"]], use_container_width=True, hide_index=True)
+    st.dataframe(df_futuro[["Data de Início", "Base", "Subárea", "Categoria", "Descrição", "Status"]], use_container_width=True, hide_index=True)
