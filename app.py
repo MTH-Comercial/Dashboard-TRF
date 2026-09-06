@@ -35,7 +35,7 @@ def carregar_dados():
     url_principal = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=1562629984"
     df = pd.read_csv(url_principal)
     
-    # Aba 2: Diário de Bordo (Com o seu GID)
+    # Aba 2: Diário de Bordo
     GID_DIARIO = "997870532" 
     url_diario = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID_DIARIO}"
     df_diario = pd.read_csv(url_diario)
@@ -66,9 +66,13 @@ st.divider()
 # 4. Gestão do Contrato (Visitas Físicas)
 st.subheader("📊 Cumprimento do Contrato Anual (Visitas Físicas)")
 col_meta1, col_meta2 = st.columns(2)
-df_visitas = df.dropna(subset=['Data da Visita'])
-visitas_macae = df_visitas[df_visitas['Base'].str.contains('Macaé', na=False)]['Data da Visita'].nunique()
-visitas_inter = df_visitas[~df_visitas['Base'].str.contains('Macaé', na=False)]['Data da Visita'].nunique()
+# Conta apenas visitas que já aconteceram (Data da Visita <= Hoje)
+hoje = pd.Timestamp.now().normalize()
+df_visitas_realizadas = df.dropna(subset=['Data da Visita'])
+df_visitas_realizadas = df_visitas_realizadas[df_visitas_realizadas['Data da Visita'] <= hoje]
+
+visitas_macae = df_visitas_realizadas[df_visitas_realizadas['Base'].str.contains('Macaé', na=False)]['Data da Visita'].nunique()
+visitas_inter = df_visitas_realizadas[~df_visitas_realizadas['Base'].str.contains('Macaé', na=False)]['Data da Visita'].nunique()
 
 with col_meta1:
     st.metric("📍 Visitas Macaé (Meta: 104/ano)", f"{visitas_macae} realizadas")
@@ -118,7 +122,7 @@ with linha2_col2:
 
 st.divider()
 
-# 7. Tratamento de Dados para o Histórico
+# 7. Tratamento de Dados (A Inteligência de Datas)
 def calcular_progresso(fase):
     fase = str(fase).strip()
     if fase == "Levantamento em Campo": return 25
@@ -128,14 +132,23 @@ def calcular_progresso(fase):
     if fase == "Concluído": return 100
     return 0
 
-df_filtrado['Progresso'] = df_filtrado['Fase'].apply(calcular_progresso)
-df_filtrado['Data de Início'] = df_filtrado['Data de Início'].dt.strftime('%d/%m/%Y').fillna('-')
-df_filtrado['Data da Visita'] = df_filtrado['Data da Visita'].dt.strftime('%d/%m/%Y').fillna('Remoto/Escritório')
-df_filtrado['Previsão de Conclusão'] = df_filtrado['Previsão de Conclusão'].dt.strftime('%d/%m/%Y').fillna('Contínuo / A definir')
-df_filtrado['Pendências/Observações'] = df_filtrado['Pendências/Observações'].fillna('Nenhuma observação principal.')
+# REGRA NOVA: É planejamento futuro se a Data de Início for amanhã em diante, OU se a prioridade for Planejamento
+mask_futuro = (df_filtrado['Data de Início'] > hoje) | (df_filtrado['Prioridade'] == "Planejamento (Futuro)")
 
-df_futuro = df_filtrado[df_filtrado["Prioridade"] == "Planejamento (Futuro)"]
-df_principal = df_filtrado[df_filtrado["Prioridade"] != "Planejamento (Futuro)"]
+df_futuro = df_filtrado[mask_futuro].copy()
+df_principal = df_filtrado[~mask_futuro].copy()
+
+# Função para formatar os dados de forma legível para a tela
+def formatar_tabelas(df_temp):
+    df_temp['Progresso'] = df_temp['Fase'].apply(calcular_progresso)
+    df_temp['Data de Início'] = df_temp['Data de Início'].dt.strftime('%d/%m/%Y').fillna('-')
+    df_temp['Data da Visita'] = df_temp['Data da Visita'].dt.strftime('%d/%m/%Y').fillna('Remoto/Escritório')
+    df_temp['Previsão de Conclusão'] = df_temp['Previsão de Conclusão'].dt.strftime('%d/%m/%Y').fillna('Contínuo / A definir')
+    df_temp['Pendências/Observações'] = df_temp['Pendências/Observações'].fillna('Nenhuma observação principal.')
+    return df_temp
+
+df_futuro = formatar_tabelas(df_futuro)
+df_principal = formatar_tabelas(df_principal)
 
 # 8. HISTÓRICO EXPANSÍVEL + LINHA DO TEMPO
 st.subheader("📋 Histórico e Execução")
@@ -168,13 +181,11 @@ else:
             # --- A MÁGICA DA LINHA DO TEMPO ---
             st.markdown("### 📜 Linha do Tempo (Atualizações)")
             
-            # Filtra o Diário de Bordo apenas para o ID desta tarefa específica
             historico_tarefa = df_diario[df_diario["ID da Tarefa"] == id_tarefa].copy()
             
             if historico_tarefa.empty:
                 st.warning("Nenhuma atualização registrada no Diário de Bordo para esta tarefa.")
             else:
-                # Ordena para a atualização mais nova ficar no topo
                 historico_tarefa = historico_tarefa.sort_values(by="Data da Atualização", ascending=False)
                 
                 for _, hist_row in historico_tarefa.iterrows():
