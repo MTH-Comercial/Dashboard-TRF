@@ -2,20 +2,48 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# 1. Configuração e Identidade Visual (Sem barra lateral)
+# 1. Configuração Inicial (Sempre a primeira linha)
 st.set_page_config(page_title="Painel Transforma | Mothé Engenharia", layout="wide", page_icon="⚡", initial_sidebar_state="collapsed")
+
+# ==========================================
+# 🔒 SISTEMA DE LOGIN E SEGURANÇA
+# ==========================================
+if "logado" not in st.session_state:
+    st.session_state["logado"] = False
+
+if not st.session_state["logado"]:
+    st.markdown("<br><br><br>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center; color: #4DA8DA;'>⚡ Mothé Engenharia</h1>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align: center; color: white;'>Acesso Restrito ao Cliente</h3>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #A8B2C1;'>Por favor, insira a senha de acesso da unidade Transforma.</p>", unsafe_allow_html=True)
+    
+    col_espaco1, col_login, col_espaco2 = st.columns([1, 1, 1])
+    with col_login:
+        senha_digitada = st.text_input("Senha de Acesso:", type="password")
+        if st.button("Entrar no Painel", use_container_width=True):
+            # VVV --- TROQUE A SENHA AQUI SE QUISER --- VVV
+            if senha_digitada == "Transforma2026": 
+                st.session_state["logado"] = True
+                st.rerun()
+            else:
+                st.error("Senha incorreta. Acesso negado.")
+    
+    # st.stop() impede que o resto do código abaixo seja carregado ou lido se não logar
+    st.stop() 
+# ==========================================
+
+# A partir daqui, o site só carrega se a pessoa passou pelo login!
 
 st.markdown("""
     <style>
     .main {background-color: #0E1117;}
     h1, h2, h3, h4 {color: #4DA8DA;}
     .stProgress > div > div > div > div {background-color: #1B7543;}
-    /* Esconde o botão de abrir a barra lateral para um visual mais limpo */
     [data-testid="collapsedControl"] {display: none;}
     </style>
     """, unsafe_allow_html=True)
 
-# Topo com Estilo CSS Integrado (Cartão Premium)
+# Topo Premium
 st.markdown("""
     <div style="background: linear-gradient(90deg, rgba(14,17,23,1) 0%, rgba(30,38,56,1) 50%, rgba(14,17,23,1) 100%);
                 padding: 40px 20px;
@@ -29,25 +57,21 @@ st.markdown("""
     </div>
 """, unsafe_allow_html=True)
 
-# 2. Conectando com o Google Sheets (Lendo as DUAS abas)
+# 2. Conectando com o Google Sheets
 @st.cache_data(ttl=30)
 def carregar_dados():
     SHEET_ID = "1LgXQeTJ4FK1h8VLGRWijU3oGaE_FNg5gBTuB6XhEiKI"
-    
     url_principal = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=1562629984"
     df = pd.read_csv(url_principal)
     
-    # Aba 2: Diário de Bordo (Com o seu GID)
     GID_DIARIO = "997870532" 
     url_diario = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID_DIARIO}"
     df_diario = pd.read_csv(url_diario)
     
-    # Tratamento de datas
     df['Data de Início'] = pd.to_datetime(df['Data de Início'], format='%d/%m/%Y', errors='coerce')
     df['Data da Visita'] = pd.to_datetime(df['Data da Visita'], format='%d/%m/%Y', errors='coerce')
     df['Previsão de Conclusão'] = pd.to_datetime(df['Previsão de Conclusão'], format='%d/%m/%Y', errors='coerce')
     if 'Subárea' not in df.columns: df['Subárea'] = '-'
-    
     df_diario['Data da Atualização'] = pd.to_datetime(df_diario['Data da Atualização'], format='%d/%m/%Y', errors='coerce')
     
     return df, df_diario
@@ -68,7 +92,6 @@ st.divider()
 # 4. Gestão do Contrato (Visitas Físicas)
 st.subheader("📊 Cumprimento do Contrato Anual (Visitas Físicas)")
 col_meta1, col_meta2 = st.columns(2)
-# Conta apenas visitas que já aconteceram
 hoje = pd.Timestamp.now().normalize()
 df_visitas_realizadas = df.dropna(subset=['Data da Visita'])
 df_visitas_realizadas = df_visitas_realizadas[df_visitas_realizadas['Data da Visita'] <= hoje]
@@ -124,7 +147,7 @@ with linha2_col2:
 
 st.divider()
 
-# 7. Tratamento de Dados (A Inteligência de Datas)
+# 7. Tratamento de Dados 
 def calcular_progresso(fase):
     fase = str(fase).strip()
     if fase == "Levantamento em Campo": return 25
@@ -134,13 +157,10 @@ def calcular_progresso(fase):
     if fase == "Concluído": return 100
     return 0
 
-# REGRA: É planejamento futuro se a Data de Início for amanhã em diante, OU se a prioridade for Planejamento
 mask_futuro = (df_filtrado['Data de Início'] > hoje) | (df_filtrado['Prioridade'] == "Planejamento (Futuro)")
-
 df_futuro = df_filtrado[mask_futuro].copy()
 df_principal = df_filtrado[~mask_futuro].copy()
 
-# Função para formatar os dados de forma legível para a tela
 def formatar_tabelas(df_temp):
     df_temp['Progresso'] = df_temp['Fase'].apply(calcular_progresso)
     df_temp['Data de Início'] = df_temp['Data de Início'].dt.strftime('%d/%m/%Y').fillna('-')
@@ -152,7 +172,7 @@ def formatar_tabelas(df_temp):
 df_futuro = formatar_tabelas(df_futuro)
 df_principal = formatar_tabelas(df_principal)
 
-# 8. HISTÓRICO EXPANSÍVEL + LINHA DO TEMPO
+# 8. HISTÓRICO EXPANSÍVEL
 st.subheader("📋 Histórico e Execução")
 st.markdown("Clique em uma tarefa abaixo para ver os detalhes e a **Linha do Tempo (Diário de Bordo)**.")
 
@@ -166,35 +186,28 @@ else:
         
         with st.expander(titulo_caixa):
             col_detalhe1, col_detalhe2 = st.columns([1, 2])
-            
             with col_detalhe1:
                 st.markdown(f"**ID:** `{id_tarefa}`")
                 st.markdown(f"**Início:** {row['Data de Início']}")
                 st.markdown(f"**Visita:** {row['Data da Visita']}")
                 st.markdown(f"**Fase Atual:** {row['Fase']}")
                 st.progress(row['Progresso'] / 100)
-                
             with col_detalhe2:
                 st.markdown(f"**📝 Descrição Inicial / Escopo:**")
                 st.info(row['Descrição'])
-                
             st.divider()
             
-            # --- A MÁGICA DA LINHA DO TEMPO ---
             st.markdown("### 📜 Linha do Tempo (Atualizações)")
-            
             historico_tarefa = df_diario[df_diario["ID da Tarefa"] == id_tarefa].copy()
-            
             if historico_tarefa.empty:
                 st.warning("Nenhuma atualização registrada no Diário de Bordo para esta tarefa.")
             else:
                 historico_tarefa = historico_tarefa.sort_values(by="Data da Atualização", ascending=False)
-                
                 for _, hist_row in historico_tarefa.iterrows():
                     data_formatada = hist_row['Data da Atualização'].strftime('%d/%m/%Y')
                     st.markdown(f"**📅 {data_formatada} | {hist_row['Fase Atualizada']}** *(Status: {hist_row['Status Atualizado']})*")
                     st.write(f"↳ {hist_row['Descrição do que aconteceu']}")
-                    st.write("") # Espaçamento
+                    st.write("") 
 
 # 9. Agenda Futura
 st.divider()
