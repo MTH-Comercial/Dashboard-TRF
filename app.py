@@ -2,16 +2,22 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# 1. Configuração Inicial (Sempre a primeira linha)
+# 1. Configuração Inicial
 st.set_page_config(page_title="Painel Transforma | Mothé Engenharia", layout="wide", page_icon="⚡", initial_sidebar_state="collapsed")
 
 # ==========================================
-# 🔒 SISTEMA DE LOGIN E SEGURANÇA
+# 🔒 SISTEMA DE LOGIN COM PERSISTÊNCIA (F5 Friend)
 # ==========================================
-if "logado" not in st.session_state:
-    st.session_state["logado"] = False
+params = st.query_params
 
-if not st.session_state["logado"]:
+if "autenticado" not in st.session_state:
+    # Se o link já tiver o passe livre, mantém logado
+    if params.get("auth") == "true":
+        st.session_state["autenticado"] = True
+    else:
+        st.session_state["autenticado"] = False
+
+if not st.session_state["autenticado"]:
     st.markdown("<br><br><br>", unsafe_allow_html=True)
     st.markdown("<h1 style='text-align: center; color: #4DA8DA;'>⚡ Mothé Engenharia</h1>", unsafe_allow_html=True)
     st.markdown("<h3 style='text-align: center; color: white;'>Acesso Restrito ao Cliente</h3>", unsafe_allow_html=True)
@@ -21,18 +27,19 @@ if not st.session_state["logado"]:
     with col_login:
         senha_digitada = st.text_input("Senha de Acesso:", type="password")
         if st.button("Entrar no Painel", use_container_width=True):
-            # VVV --- TROQUE A SENHA AQUI SE QUISER --- VVV
+            # VVV --- SUA SENHA --- VVV
             if senha_digitada == "Transforma2026": 
-                st.session_state["logado"] = True
+                st.session_state["autenticado"] = True
+                # Carimba o navegador para o F5 não pedir senha de novo
+                st.query_params["auth"] = "true"
                 st.rerun()
             else:
                 st.error("Senha incorreta. Acesso negado.")
     
-    # st.stop() impede que o resto do código abaixo seja carregado ou lido se não logar
     st.stop() 
 # ==========================================
 
-# A partir daqui, o site só carrega se a pessoa passou pelo login!
+# A partir daqui, o site está liberado!
 
 st.markdown("""
     <style>
