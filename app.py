@@ -42,7 +42,6 @@ st.markdown("""
     h1, h2, h3, h4 {color: #4DA8DA;}
     .stProgress > div > div > div > div {background-color: #1B7543;}
     [data-testid="collapsedControl"] {display: none;}
-    /* Estiliza as abas (tabs) para ficarem mais evidentes */
     .stTabs [data-baseweb="tab-list"] {gap: 24px;}
     .stTabs [data-baseweb="tab"] {padding-top: 16px; padding-bottom: 16px;}
     </style>
@@ -73,6 +72,10 @@ def carregar_dados():
     url_diario = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID_DIARIO}"
     df_diario = pd.read_csv(url_diario)
     
+    # Preenche vazios críticos ANTES do filtro, para não sumir com o Backlog
+    df['Base'] = df['Base'].fillna('A definir')
+    df['Status'] = df['Status'].fillna('Aguardando')
+    
     # Datas para cálculo
     df['Data de Início_Calc'] = pd.to_datetime(df['Data de Início'], format='%d/%m/%Y', errors='coerce')
     df['Data da Visita_Calc'] = pd.to_datetime(df['Data da Visita'], format='%d/%m/%Y', errors='coerce')
@@ -80,7 +83,6 @@ def carregar_dados():
     if 'Subárea' not in df.columns: df['Subárea'] = '-'
     df_diario['Data da Atualização'] = pd.to_datetime(df_diario['Data da Atualização'], format='%d/%m/%Y', errors='coerce')
     
-    # Tratando NaN nas strings para a pesquisa funcionar
     colunas_texto = ['ID da Tarefa', 'Descrição', 'Pendências/Observações', 'Categoria', 'Subárea']
     for col in colunas_texto:
         if col in df.columns:
@@ -101,10 +103,8 @@ with col_filtro1:
 with col_filtro2:
     status_selecionado = st.multiselect("Selecione o Status:", options=df["Status"].dropna().unique(), default=df["Status"].dropna().unique())
 
-# Aplicando os filtros
 df_filtrado = df.query("Base in @base_selecionada and Status in @status_selecionado").copy()
 
-# Aplicando a busca por texto se o usuário digitou algo
 if termo_busca:
     termo = termo_busca.lower()
     mask_busca = (
@@ -145,12 +145,12 @@ col1, col2, col3, col4 = st.columns(4)
 col1.metric("🚨 Atendimentos Emergenciais", len(df_filtrado[df_filtrado["Prioridade"] == "Emergencial"]))
 col2.metric("✅ Atividades Concluídas", len(df_filtrado[df_filtrado["Status"] == "Resolvido"]))
 col3.metric("⏳ Em Andamento", len(df_filtrado[df_filtrado["Status"] == "Em Andamento"]))
-col4.metric("⏸️ Pausados/Aguardando", len(df_filtrado[df_filtrado["Status"].isin(["Pausado", "Aguardando Terceiros"])]))
+col4.metric("⏸️ Pausados/Aguardando", len(df_filtrado[df_filtrado["Status"].isin(["Pausado", "Aguardando Terceiros", "Aguardando"])]))
 
 # 6. Gráficos
 st.subheader("📈 Análise de Área e Produção")
-cor_status = {"Resolvido": "#1B7543", "Em Andamento": "#4DA8DA", "Não Iniciado": "#A8B2C1", "Pausado": "#FF9F43", "Aguardando Terceiros": "#EA5455", "Agendado": "#836AF9"}
-cor_bases = {"Macaé/RJ": "#1B7543", "Gradim - São Gonçalo/RJ": "#4DA8DA", "Porto do Açu - São João da Barra/RJ": "#FF9F43"}
+cor_status = {"Resolvido": "#1B7543", "Em Andamento": "#4DA8DA", "Não Iniciado": "#A8B2C1", "Pausado": "#FF9F43", "Aguardando Terceiros": "#EA5455", "Agendado": "#836AF9", "Aguardando": "#A8B2C1"}
+cor_bases = {"Macaé/RJ": "#1B7543", "Gradim - São Gonçalo/RJ": "#4DA8DA", "Porto do Açu - São João da Barra/RJ": "#FF9F43", "A definir": "#555555"}
 
 linha1_col1, linha1_col2 = st.columns(2)
 with linha1_col1:
@@ -190,11 +190,14 @@ def calcular_progresso(fase):
     if fase == "Concluído": return 100
     return 0
 
-# REGRA: É Futuro se a data for maior que hoje, se a prioridade for Planejamento, OU SE NÃO TIVER DATA DE INÍCIO (Backlog)
-mask_futuro = (df_filtrado['Data de Início_Calc'] > hoje) | (df_filtrado['Prioridade'] == "Planejamento (Futuro)") | (df_filtrado['Data de Início_Calc'].isna())
-
+# Apenas as linhas com prioridade "Planejamento (Futuro)" ou data futura vão para o backlog
+mask_futuro = (df_filtrado['Data de Início_Calc'] > hoje) | (df_filtrado['Prioridade'] == "Planejamento (Futuro)")
 df_futuro = df_filtrado[mask_futuro].copy()
 df_principal = df_filtrado[~mask_futuro].copy()
+
+# ---> A MÁGICA DA ORDENAÇÃO DO HISTÓRICO <---
+# Ordenamos do mais recente para o mais antigo, colocando as tarefas sem data no final
+df_principal = df_principal.sort_values(by='Data de Início_Calc', ascending=False, na_position='last')
 
 def formatar_tabelas(df_temp):
     df_temp['Progresso'] = df_temp['Fase'].apply(calcular_progresso)
@@ -207,19 +210,17 @@ def formatar_tabelas(df_temp):
 df_futuro = formatar_tabelas(df_futuro)
 df_principal = formatar_tabelas(df_principal)
 
-# ==========================================
 # 8. ABAS (TABS) PARA ORGANIZAR O ESPAÇO
-# ==========================================
 st.subheader("📋 Acompanhamento Técnico")
 aba1, aba2 = st.tabs(["📂 Histórico e Execução (Projetos Ativos)", "🗓️ Cronograma Cronológico de Visitas"])
 
 with aba1:
-    st.markdown("Clique em uma tarefa para ver os detalhes, observações de campo e a **Linha do Tempo**.")
+    st.markdown("Acompanhamento das tarefas ordenadas da **mais recente** para a **mais antiga**.")
     if df_principal.empty:
         st.info("Nenhuma atividade encontrada com os filtros/busca atuais.")
     else:
         for index, row in df_principal.iterrows():
-            id_tarefa = row["ID da Tarefa"]
+            id_tarefa = row["ID da Tarefa"] if row["ID da Tarefa"] != "" else "[Sem ID]"
             icone_status = "✅" if row["Status"] == "Resolvido" else "⏳" if row["Status"] == "Em Andamento" else "⏸️"
             titulo_caixa = f"{icone_status} [{row['Status']}] {row['Base']} ({row['Subárea']}) - {row['Categoria']}"
             
@@ -239,7 +240,7 @@ with aba1:
                 st.divider()
                 st.markdown("### 📜 Linha do Tempo (Atualizações do Diário)")
                 historico_tarefa = df_diario[df_diario["ID da Tarefa"] == id_tarefa].copy()
-                if historico_tarefa.empty:
+                if historico_tarefa.empty or id_tarefa == "[Sem ID]":
                     st.warning("Nenhuma atualização extra registrada no Diário de Bordo para esta tarefa.")
                 else:
                     historico_tarefa = historico_tarefa.sort_values(by="Data da Atualização", ascending=False)
@@ -264,12 +265,11 @@ with aba2:
             st.caption(f"ID: {cron_row['ID da Tarefa']} | Escopo: {cron_row['Descrição']}")
             st.markdown("---")
 
-# 9. Agenda Futura (Agora inclui o Backlog)
+# 9. Agenda Futura (Agora inclui o Backlog perfeitamente)
 st.divider()
 st.subheader("📅 Planejamento, Prazos Futuros e Backlog (No Radar)")
 if df_futuro.empty:
     st.info("Nenhuma atividade futura ou no radar neste momento.")
 else:
-    # Mostramos a coluna de exibição que trata os campos vazios
-    df_tabela_futura = df_futuro[["Data de Início Exibição", "Base", "Subárea", "Categoria", "Descrição", "Status"]].rename(columns={"Data de Início Exibição": "Data de Início"})
+    df_tabela_futura = df_futuro[["Data de Início Exibição", "Categoria", "Descrição"]].rename(columns={"Data de Início Exibição": "Data Planejada/Status"})
     st.dataframe(df_tabela_futura, use_container_width=True, hide_index=True)
