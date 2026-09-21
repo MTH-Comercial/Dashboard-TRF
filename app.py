@@ -6,7 +6,7 @@ import plotly.express as px
 st.set_page_config(page_title="Painel Transforma | Mothé Engenharia", layout="wide", page_icon="⚡", initial_sidebar_state="collapsed")
 
 # ==========================================
-# 🔒 SISTEMA DE LOGIN COM PERSISTÊNCIA (F5 Friend)
+# 🔒 SISTEMA DE LOGIN COM PERSISTÊNCIA
 # ==========================================
 params = st.query_params
 
@@ -42,6 +42,9 @@ st.markdown("""
     h1, h2, h3, h4 {color: #4DA8DA;}
     .stProgress > div > div > div > div {background-color: #1B7543;}
     [data-testid="collapsedControl"] {display: none;}
+    /* Estiliza as abas (tabs) para ficarem mais evidentes */
+    .stTabs [data-baseweb="tab-list"] {gap: 24px;}
+    .stTabs [data-baseweb="tab"] {padding-top: 16px; padding-bottom: 16px;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -70,37 +73,61 @@ def carregar_dados():
     url_diario = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID_DIARIO}"
     df_diario = pd.read_csv(url_diario)
     
-    df['Data de Início'] = pd.to_datetime(df['Data de Início'], format='%d/%m/%Y', errors='coerce')
-    df['Data da Visita'] = pd.to_datetime(df['Data da Visita'], format='%d/%m/%Y', errors='coerce')
-    df['Previsão de Conclusão'] = pd.to_datetime(df['Previsão de Conclusão'], format='%d/%m/%Y', errors='coerce')
+    # Datas para cálculo
+    df['Data de Início_Calc'] = pd.to_datetime(df['Data de Início'], format='%d/%m/%Y', errors='coerce')
+    df['Data da Visita_Calc'] = pd.to_datetime(df['Data da Visita'], format='%d/%m/%Y', errors='coerce')
+    
     if 'Subárea' not in df.columns: df['Subárea'] = '-'
     df_diario['Data da Atualização'] = pd.to_datetime(df_diario['Data da Atualização'], format='%d/%m/%Y', errors='coerce')
     
+    # Tratando NaN nas strings para a pesquisa funcionar
+    colunas_texto = ['ID da Tarefa', 'Descrição', 'Pendências/Observações', 'Categoria', 'Subárea']
+    for col in colunas_texto:
+        if col in df.columns:
+            df[col] = df[col].fillna('')
+            
     return df, df_diario
 
 df, df_diario = carregar_dados()
 
-# 3. FILTROS INTEGRADOS
-st.markdown("### 🎛️ Filtros de Análise")
-col_filtro1, col_filtro2 = st.columns(2)
+# 3. FILTROS E BUSCA INTEGRADA
+st.markdown("### 🎛️ Filtros e Pesquisa")
+col_busca, col_filtro1, col_filtro2 = st.columns([2, 1, 1])
+
+with col_busca:
+    termo_busca = st.text_input("🔍 Pesquisar (ID, Descrição, Observação...):", placeholder="Ex: Compressor, ACT-006...")
 with col_filtro1:
     base_selecionada = st.multiselect("Selecione a Base/Unidade:", options=df["Base"].dropna().unique(), default=df["Base"].dropna().unique())
 with col_filtro2:
     status_selecionado = st.multiselect("Selecione o Status:", options=df["Status"].dropna().unique(), default=df["Status"].dropna().unique())
 
+# Aplicando os filtros
 df_filtrado = df.query("Base in @base_selecionada and Status in @status_selecionado").copy()
+
+# Aplicando a busca por texto se o usuário digitou algo
+if termo_busca:
+    termo = termo_busca.lower()
+    mask_busca = (
+        df_filtrado['ID da Tarefa'].str.lower().str.contains(termo) |
+        df_filtrado['Descrição'].str.lower().str.contains(termo) |
+        df_filtrado['Pendências/Observações'].str.lower().str.contains(termo) |
+        df_filtrado['Categoria'].str.lower().str.contains(termo) |
+        df_filtrado['Subárea'].str.lower().str.contains(termo)
+    )
+    df_filtrado = df_filtrado[mask_busca]
+
 st.divider()
 
-# 4. Gestão do Contrato (Visitas Físicas com % de Meta)
+# 4. Gestão do Contrato (Visitas Físicas)
 st.subheader("📊 Cumprimento do Contrato Anual (Visitas Físicas)")
 col_meta1, col_meta2 = st.columns(2)
 hoje = pd.Timestamp.now().normalize()
 
-df_visitas_realizadas = df.dropna(subset=['Data da Visita'])
-df_visitas_realizadas = df_visitas_realizadas[df_visitas_realizadas['Data da Visita'] <= hoje]
+df_visitas_realizadas = df.dropna(subset=['Data da Visita_Calc'])
+df_visitas_realizadas = df_visitas_realizadas[df_visitas_realizadas['Data da Visita_Calc'] <= hoje]
 
-visitas_macae = df_visitas_realizadas[df_visitas_realizadas['Base'].str.contains('Macaé', na=False)]['Data da Visita'].nunique()
-visitas_inter = df_visitas_realizadas[~df_visitas_realizadas['Base'].str.contains('Macaé', na=False)]['Data da Visita'].nunique()
+visitas_macae = df_visitas_realizadas[df_visitas_realizadas['Base'].str.contains('Macaé', na=False)]['Data da Visita_Calc'].nunique()
+visitas_inter = df_visitas_realizadas[~df_visitas_realizadas['Base'].str.contains('Macaé', na=False)]['Data da Visita_Calc'].nunique()
 
 perc_macae = min((visitas_macae / 104) * 100, 100)
 perc_inter = min((visitas_inter / 12) * 100, 100)
@@ -108,7 +135,6 @@ perc_inter = min((visitas_inter / 12) * 100, 100)
 with col_meta1:
     st.metric("📍 Visitas Macaé (Meta: 104/ano)", f"{visitas_macae} realizadas ({perc_macae:.1f}% da meta)")
     st.progress(min(visitas_macae / 104, 1.0))
-
 with col_meta2:
     st.metric("📍 Visitas Gradim/Açu (Meta: 12/ano)", f"{visitas_inter} realizadas ({perc_inter:.1f}% da meta)")
     st.progress(min(visitas_inter / 12, 1.0))
@@ -154,7 +180,7 @@ with linha2_col2:
 
 st.divider()
 
-# 7. Tratamento de Dados 
+# 7. Tratamento de Dados (Regra de Backlog Inclusa)
 def calcular_progresso(fase):
     fase = str(fase).strip()
     if fase == "Levantamento em Campo": return 25
@@ -164,85 +190,86 @@ def calcular_progresso(fase):
     if fase == "Concluído": return 100
     return 0
 
-mask_futuro = (df_filtrado['Data de Início'] > hoje) | (df_filtrado['Prioridade'] == "Planejamento (Futuro)")
+# REGRA: É Futuro se a data for maior que hoje, se a prioridade for Planejamento, OU SE NÃO TIVER DATA DE INÍCIO (Backlog)
+mask_futuro = (df_filtrado['Data de Início_Calc'] > hoje) | (df_filtrado['Prioridade'] == "Planejamento (Futuro)") | (df_filtrado['Data de Início_Calc'].isna())
+
 df_futuro = df_filtrado[mask_futuro].copy()
 df_principal = df_filtrado[~mask_futuro].copy()
 
 def formatar_tabelas(df_temp):
     df_temp['Progresso'] = df_temp['Fase'].apply(calcular_progresso)
-    df_temp['Data de Início'] = df_temp['Data de Início'].dt.strftime('%d/%m/%Y').fillna('-')
-    df_temp['Data da Visita'] = df_temp['Data da Visita'].dt.strftime('%d/%m/%Y').fillna('Remoto/Escritório')
-    df_temp['Previsão de Conclusão'] = df_temp['Previsão de Conclusão'].dt.strftime('%d/%m/%Y').fillna('Contínuo / A definir')
-    df_temp['Pendências/Observações'] = df_temp['Pendências/Observações'].fillna('Nenhuma observação registrada.')
+    df_temp['Data de Início Exibição'] = df_temp['Data de Início'].fillna('A definir (No Radar)')
+    df_temp['Data da Visita Exibição'] = df_temp['Data da Visita'].fillna('Remoto/Escritório')
+    df_temp['Previsão de Conclusão'] = df_temp['Previsão de Conclusão'].fillna('Contínuo / A definir')
+    df_temp['Pendências/Observações'] = df_temp['Pendências/Observações'].replace('', 'Nenhuma observação registrada.')
     return df_temp
 
 df_futuro = formatar_tabelas(df_futuro)
 df_principal = formatar_tabelas(df_principal)
 
-# 8. HISTÓRICO EXPANSÍVEL
-st.subheader("📋 Histórico e Execução")
-st.markdown("Clique em uma tarefa abaixo para ver os detalhes, observações de campo e a **Linha do Tempo (Diário de Bordo)**.")
+# ==========================================
+# 8. ABAS (TABS) PARA ORGANIZAR O ESPAÇO
+# ==========================================
+st.subheader("📋 Acompanhamento Técnico")
+aba1, aba2 = st.tabs(["📂 Histórico e Execução (Projetos Ativos)", "🗓️ Cronograma Cronológico de Visitas"])
 
-if df_principal.empty:
-    st.info("Nenhuma atividade encontrada com os filtros atuais.")
-else:
-    for index, row in df_principal.iterrows():
-        id_tarefa = row["ID da Tarefa"]
-        icone_status = "✅" if row["Status"] == "Resolvido" else "⏳" if row["Status"] == "Em Andamento" else "⏸️"
-        titulo_caixa = f"{icone_status} [{row['Status']}] {row['Base']} ({row['Subárea']}) - {row['Categoria']}"
-        
-        with st.expander(titulo_caixa):
-            col_detalhe1, col_detalhe2 = st.columns([1, 2])
-            with col_detalhe1:
-                st.markdown(f"**ID:** `{id_tarefa}`")
-                st.markdown(f"**Início:** {row['Data de Início']}")
-                st.markdown(f"**Visita:** {row['Data da Visita']}")
-                st.markdown(f"**Fase Atual:** {row['Fase']}")
-                st.progress(row['Progresso'] / 100)
-            with col_detalhe2:
-                st.markdown(f"**📝 Descrição Resumida:**")
-                st.info(row['Descrição'])
-                st.markdown(f"**💬 Relato Detalhado / Observações de Campo:**")
-                st.success(row['Pendências/Observações'])
-                
-            st.divider()
+with aba1:
+    st.markdown("Clique em uma tarefa para ver os detalhes, observações de campo e a **Linha do Tempo**.")
+    if df_principal.empty:
+        st.info("Nenhuma atividade encontrada com os filtros/busca atuais.")
+    else:
+        for index, row in df_principal.iterrows():
+            id_tarefa = row["ID da Tarefa"]
+            icone_status = "✅" if row["Status"] == "Resolvido" else "⏳" if row["Status"] == "Em Andamento" else "⏸️"
+            titulo_caixa = f"{icone_status} [{row['Status']}] {row['Base']} ({row['Subárea']}) - {row['Categoria']}"
             
-            st.markdown("### 📜 Linha do Tempo (Atualizações do Diário)")
-            historico_tarefa = df_diario[df_diario["ID da Tarefa"] == id_tarefa].copy()
-            if historico_tarefa.empty:
-                st.warning("Nenhuma atualização extra registrada no Diário de Bordo para esta tarefa.")
-            else:
-                historico_tarefa = historico_tarefa.sort_values(by="Data da Atualização", ascending=False)
-                for _, hist_row in historico_tarefa.iterrows():
-                    data_formatada = hist_row['Data da Atualização'].strftime('%d/%m/%Y')
-                    st.markdown(f"**📅 {data_formatada} | {hist_row['Fase Atualizada']}** *(Status: {hist_row['Status Atualizado']})*")
-                    st.write(f"↳ {hist_row['Descrição do que aconteceu']}")
-                    st.write("") 
+            with st.expander(titulo_caixa):
+                col_detalhe1, col_detalhe2 = st.columns([1, 2])
+                with col_detalhe1:
+                    st.markdown(f"**ID:** `{id_tarefa}`")
+                    st.markdown(f"**Início:** {row['Data de Início Exibição']}")
+                    st.markdown(f"**Visita:** {row['Data da Visita Exibição']}")
+                    st.markdown(f"**Fase Atual:** {row['Fase']}")
+                    st.progress(row['Progresso'] / 100)
+                with col_detalhe2:
+                    st.markdown(f"**📝 Descrição Resumida:**")
+                    st.info(row['Descrição'])
+                    st.markdown(f"**💬 Relato Detalhado / Observações de Campo:**")
+                    st.success(row['Pendências/Observações'])
+                st.divider()
+                st.markdown("### 📜 Linha do Tempo (Atualizações do Diário)")
+                historico_tarefa = df_diario[df_diario["ID da Tarefa"] == id_tarefa].copy()
+                if historico_tarefa.empty:
+                    st.warning("Nenhuma atualização extra registrada no Diário de Bordo para esta tarefa.")
+                else:
+                    historico_tarefa = historico_tarefa.sort_values(by="Data da Atualização", ascending=False)
+                    for _, hist_row in historico_tarefa.iterrows():
+                        data_formatada = hist_row['Data da Atualização'].strftime('%d/%m/%Y')
+                        st.markdown(f"**📅 {data_formatada} | {hist_row['Fase Atualizada']}** *(Status: {hist_row['Status Atualizado']})*")
+                        st.write(f"↳ {hist_row['Descrição do que aconteceu']}")
+                        st.write("") 
 
-# 9. NOVO: Cronograma Cronológico de Visitas (Agenda e Pins de Análise)
+with aba2:
+    st.markdown("Visão cronológica de todas as visitas técnicas (Filtra de acordo com a sua pesquisa).")
+    df_cronograma = df_filtrado.dropna(subset=['Data da Visita_Calc']).copy()
+    if df_cronograma.empty:
+        st.info("Nenhuma visita técnica encontrada com a busca/filtros atuais.")
+    else:
+        df_cronograma = df_cronograma.sort_values(by='Data da Visita_Calc', ascending=False) # Mais novas no topo
+        for _, cron_row in df_cronograma.iterrows():
+            d_visita = cron_row['Data da Visita_Calc']
+            pin = "✅ **[Realizada]**" if d_visita <= hoje else "📅 **[Programada]**"
+            data_str = d_visita.strftime('%d/%m/%Y')
+            st.markdown(f"{pin} **{data_str}** — **{cron_row['Base']}** | *{cron_row['Categoria']}* ({cron_row['Subárea']})")
+            st.caption(f"ID: {cron_row['ID da Tarefa']} | Escopo: {cron_row['Descrição']}")
+            st.markdown("---")
+
+# 9. Agenda Futura (Agora inclui o Backlog)
 st.divider()
-st.subheader("🗓️ Cronograma e Linha do Tempo de Visitas")
-st.markdown("Visão cronológica de todas as visitas técnicas programadas e realizadas.")
-
-# Cria um dataframe específico ordenado por data de visita
-df_cronograma = df.dropna(subset=['Data da Visita']).copy()
-if df_cronograma.empty:
-    st.info("Nenhuma visita técnica com data registrada no momento.")
-else:
-    df_cronograma = df_cronograma.sort_values(by='Data da Visita')
-    for _, cron_row in df_cronograma.iterrows():
-        d_visita = cron_row['Data da Visita']
-        # Pin verde se já passou ou é hoje, pin azul se for futura
-        pin = "✅ **[Realizada]**" if d_visita <= hoje else "📅 **[Programada]**"
-        data_str = d_visita.strftime('%d/%m/%Y')
-        
-        st.markdown(f"{pin} **{data_str}** — **{cron_row['Base']}** | *{cron_row['Categoria']}* ({cron_row['Subárea']})")
-        st.caption(f"Escopo: {cron_row['Descrição']}")
-        st.markdown("---")
-
-# 10. Agenda Futura
-st.subheader("📅 Planejamento e Prazos Futuros")
+st.subheader("📅 Planejamento, Prazos Futuros e Backlog (No Radar)")
 if df_futuro.empty:
-    st.info("Nenhuma atividade futura agendada no momento.")
+    st.info("Nenhuma atividade futura ou no radar neste momento.")
 else:
-    st.dataframe(df_futuro[["Data de Início", "Base", "Subárea", "Categoria", "Descrição", "Status"]], use_container_width=True, hide_index=True)
+    # Mostramos a coluna de exibição que trata os campos vazios
+    df_tabela_futura = df_futuro[["Data de Início Exibição", "Base", "Subárea", "Categoria", "Descrição", "Status"]].rename(columns={"Data de Início Exibição": "Data de Início"})
+    st.dataframe(df_tabela_futura, use_container_width=True, hide_index=True)
