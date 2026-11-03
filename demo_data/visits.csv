@@ -1,0 +1,4 @@
+ID da Visita,Data da Visita,Base,Tipo,ID da Tarefa vinculada,Resumo,Observações,Responsável,Origem
+VIS-0001,02/09/2026,Macaé/RJ,Presencial,ACT-001,Alinhamento inicial,,Engenharia,Registro manual
+VIS-0002,08/09/2026,Macaé/RJ,Presencial,ACT-002,Vistoria técnica,,Engenharia,Registro manual
+VIS-0003,15/09/2026,Porto do Açu - São João da Barra/RJ,Presencial,ACT-004,Visita Açu,,Engenharia,Registro manual
