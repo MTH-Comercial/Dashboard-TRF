@@ -4,6 +4,7 @@ from datetime import date
 from html import escape
 from pathlib import Path
 import io
+import hashlib
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -17,9 +18,11 @@ from analytics import (
     visit_frame, visits_from_register, visits_from_tasks, parse_date, today_brazil,
 )
 from security import verify_password
+from preview import parse_uploaded_workbook
 from storage import (
     add_diary_and_update, add_visit, create_task, demo_mode, google_ready,
     initialize_visits_from_tasks, load_all, secret, update_task,
+    clear_data_cache, demo_replace_dataset,
 )
 
 st.set_page_config(
@@ -112,7 +115,7 @@ def login_page():
                'Gestão de contrato e acompanhamento técnico • Mothé Engenharia',
                'ACESSO AO PAINEL')
         if demo_mode():
-            st.info('Modo demonstração com dados fictícios. Nenhuma edição é gravada.')
+            st.info('Modo de avaliação: carregue seu próprio Excel e experimente os lançamentos sem alterar o Google Sheets. Os dados de teste duram apenas nesta sessão.')
             if st.button('Entrar na demonstração', type='primary', use_container_width=True):
                 st.session_state['role'] = 'admin'
                 st.rerun()
@@ -146,7 +149,7 @@ if not st.session_state.get('role'):
     login_page()
 
 if st.session_state.pop('save_success', False):
-    st.toast('Dados salvos na planilha Google Sheets.', icon='✅')
+    st.toast('Lançamento de teste registrado nesta sessão.' if demo_mode() else 'Dados salvos na planilha Google Sheets.', icon='✅')
 
 try:
     raw = load_all()
@@ -159,7 +162,7 @@ except Exception as exc:
         with st.expander('Detalhes técnicos (administrador)'):
             st.code(f'{type(exc).__name__}: {str(exc)}')
     if st.button('Tentar novamente'):
-        load_all.clear()
+        clear_data_cache()
         st.rerun()
     st.stop()
 
@@ -183,7 +186,28 @@ with st.sidebar:
     st.markdown('### ⚡ Mothé Engenharia')
     st.caption('PAINEL TRANSFORMA • VERSÃO 2.0')
     if raw.get('demo'):
-        st.warning('Ambiente demonstrativo')
+        st.warning('Ambiente demonstrativo · sem gravação no Google')
+        st.markdown('#### Carregar seus dados reais')
+        st.caption('Baixe sua planilha Google em Arquivo → Fazer download → Microsoft Excel (.xlsx) e carregue aqui. A importação é temporária e individual nesta sessão.')
+        up = st.file_uploader('Importar Excel do dashboard', type=['xlsx'], key='demo_xlsx_import')
+        if up is not None:
+            content = up.getvalue()
+            digest = hashlib.sha256(content).hexdigest()
+            if digest != st.session_state.get('demo_import_digest'):
+                try:
+                    imported = parse_uploaded_workbook(content)
+                    demo_replace_dataset(imported)
+                    st.session_state['demo_import_digest'] = digest
+                    st.rerun()
+                except ValueError as exc:
+                    st.error(f'Falha ao carregar o Excel: {exc}')
+        st.caption(raw.get('source', 'Dados de exemplo'))
+        if st.button('Voltar aos dados fictícios', use_container_width=True):
+            st.session_state.pop('demo_dataset', None)
+            if up is not None:
+                st.session_state['demo_import_digest'] = hashlib.sha256(up.getvalue()).hexdigest()
+            st.rerun()
+
     st.divider()
     options = ['Visão executiva', 'Atividades e projetos', 'Visitas e contrato', 'Planejamento e backlog', 'Diário de bordo']
     if st.session_state['role'] == 'admin':
@@ -201,7 +225,7 @@ with st.sidebar:
     st.divider()
     st.caption(f"Perfil: **{'Administrador' if st.session_state['role']=='admin' else 'Cliente (consulta)'}**")
     if st.button('↻ Atualizar dados', use_container_width=True):
-        load_all.clear()
+        clear_data_cache()
         st.rerun()
     if st.button('Sair da conta', use_container_width=True):
         logout()
@@ -479,7 +503,7 @@ def _commit(callable_fn, *args, **kwargs):
     try:
         result = callable_fn(*args, **kwargs)
         st.session_state['save_success'] = True
-        load_all.clear()
+        clear_data_cache()
         st.rerun()
     except Exception as exc:
         st.error(f'Não foi possível salvar: {exc}')
@@ -487,7 +511,7 @@ def _commit(callable_fn, *args, **kwargs):
 
 def admin_new_task():
     st.markdown('#### Nova atividade')
-    st.caption('O ID é gerado automaticamente. Todas as alterações são gravadas na aba original.')
+    st.caption('O ID é gerado automaticamente. Na demonstração, nenhuma alteração é gravada no Google Sheets.')
     with st.form('new_task',clear_on_submit=True):
         a,b,c = st.columns(3)
         start_date=a.date_input('Data de início',today,format='DD/MM/YYYY')
@@ -564,7 +588,7 @@ def admin_edit_task():
 
 def admin_diary():
     st.markdown('#### Novo relato do diário de bordo')
-    st.caption('Você pode lançar o relato e, opcionalmente, atualizar a fase e o status da tarefa no mesmo envio.')
+    st.caption('Informe o que você fez hoje em uma tarefa existente. Você pode também atualizar a fase e o status no mesmo lançamento.')
     if tasks.empty:
         st.warning('Cadastre ao menos uma atividade primeiro.')
         return
@@ -593,11 +617,11 @@ def admin_diary():
 def admin_visit():
     st.markdown('#### Registrar visita contratual')
     if raw['visit_mode']=='legado':
-        st.warning('A aba Visitas_Contrato ainda não existe. É necessário migrar os registros históricos antes de iniciar o lançamento independente.')
+        st.warning('O arquivo ainda não possui a aba Visitas_Contrato. Você pode simular a migração do histórico antes de registrar novas visitas.')
         st.markdown('**Criar controle de visitas e importar histórico**')
         st.caption('Importa uma visita por base/data de todas as tarefas existentes (até hoje). Os registros históricos importados serão identificados como **a validar**.')
-        checked=st.checkbox('Tenho backup da planilha e autorizo criar a nova aba com o histórico deduplicado.')
-        if st.button('Criar aba e migrar visitas',disabled=not checked,type='primary'):
+        checked=st.checkbox('Entendo que a importação de visitas é estimada. Na demonstração, a criação não modifica a planilha original.' if demo_mode() else 'Tenho backup da planilha e autorizo criar a nova aba com o histórico deduplicado.')
+        if st.button('Simular importação de visitas' if demo_mode() else 'Criar aba e migrar visitas',disabled=not checked,type='primary'):
             _commit(initialize_visits_from_tasks,raw['tasks'])
         return
     with st.form('add_visit_form',clear_on_submit=True):
@@ -649,23 +673,39 @@ def admin_quality():
                       file_name='transforma_diario.csv',mime='text/csv',use_container_width=True)
 
 
+def admin_today():
+    st.markdown('### 📝 Lançar o trabalho realizado no dia')
+    st.caption('Escolha como deseja registrar o serviço. Uma atividade existente recebe um novo relato no Diário de Bordo; um serviço novo recebe um ID ACT automaticamente.')
+    action = st.radio('O trabalho é de uma atividade já cadastrada?',
+                      ['Sim — atualizar atividade existente', 'Não — cadastrar nova atividade'],
+                      key='admin_today_kind')
+    st.divider()
+    if action.startswith('Sim'):
+        admin_diary()
+    else:
+        admin_new_task()
+
+
 def render_admin():
     header('Central de gestão',
-           'Cadastre, atualize e acompanhe as demandas sem abrir a planilha do Google.',
+           'Registre o trabalho do dia e acompanhe as demandas sem abrir a planilha.',
            'ÁREA EXCLUSIVA • ADMINISTRADOR')
-    if raw.get('demo') or not google_ready():
-        st.warning('Edição desabilitada: o ambiente está em demonstração ou sem autorização de escrita no Google Sheets.')
+    if raw.get('demo'):
+        st.warning('**Modo de teste ativo:** os formulários estão liberados. As alterações são apenas nesta sessão, aparecem nos indicadores e podem ser exportadas; não modificam sua planilha Google.')
+    elif not google_ready():
+        st.warning('Edição indisponível até configurar a conta Google Sheets em Streamlit Secrets.')
         admin_quality()
         return
-    admin_pages = ['＋ Nova atividade','✎ Editar atividade','▤ Diário de bordo',
-                   '◉ Registrar visita','✓ Conferência / Exportação']
+    admin_pages = ['📝 Lançar trabalho do dia', '＋ Nova atividade', '✎ Editar atividade',
+                   '▤ Diário de bordo', '◉ Registrar visita', '✓ Conferência / Exportação']
     action = st.radio('Escolha uma operação', admin_pages, horizontal=True,
                       label_visibility='collapsed', key='admin_action')
     st.write('')
-    if action == admin_pages[0]: admin_new_task()
-    elif action == admin_pages[1]: admin_edit_task()
-    elif action == admin_pages[2]: admin_diary()
-    elif action == admin_pages[3]: admin_visit()
+    if action == admin_pages[0]: admin_today()
+    elif action == admin_pages[1]: admin_new_task()
+    elif action == admin_pages[2]: admin_edit_task()
+    elif action == admin_pages[3]: admin_diary()
+    elif action == admin_pages[4]: admin_visit()
     else: admin_quality()
 
 if page=='Visão executiva':
@@ -682,4 +722,4 @@ elif page=='Gestão administrativa' and st.session_state['role']=='admin':
     render_admin()
 
 st.divider()
-st.caption('Mothé Engenharia • Painel de acompanhamento Transforma • Indicadores atualizados a cada 45 segundos ou por comando de atualização. Os dados dependem dos registros da planilha Google Sheets.')
+st.caption('Mothé Engenharia • Painel Transforma • Dados reais atualizados a cada 45 segundos; na demonstração, as informações são locais à sessão e não alteram o Google Sheets.')

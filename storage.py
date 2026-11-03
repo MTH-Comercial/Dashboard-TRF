@@ -6,7 +6,7 @@ import io
 from pathlib import Path
 import gspread
 import streamlit as st
-from analytics import TASK_COLUMNS, DIARY_COLUMNS, VISIT_COLUMNS, new_task_id, today_brazil
+from analytics import TASK_COLUMNS, DIARY_COLUMNS, VISIT_COLUMNS, new_task_id, today_brazil, task_frame, visits_from_tasks
 from security import safe_user_entry
 
 DEFAULT_SHEET_ID = '1LgXQeTJ4FK1h8VLGRWijU3oGaE_FNg5gBTuB6XhEiKI'
@@ -58,12 +58,32 @@ def read_records(ws, columns):
 
 
 def load_demo():
-    folder = Path(__file__).parent / 'demo_data'
-    def load(name):
-        with (folder / name).open(encoding='utf-8-sig', newline='') as fh:
-            return list(csv.DictReader(fh))
-    return {'tasks': load('tasks.csv'), 'diary': load('diary.csv'),
-            'visits': load('visits.csv'), 'visit_mode': 'registro', 'demo': True}
+    # Armazenamento exclusivo desta sessão Streamlit (NÃO compartilhado no cache global).
+    if 'demo_dataset' not in st.session_state:
+        folder = Path(__file__).parent / 'demo_data'
+        def load(name):
+            with (folder / name).open(encoding='utf-8-sig', newline='') as fh:
+                return list(csv.DictReader(fh))
+        st.session_state['demo_dataset'] = {
+            'tasks': load('tasks.csv'), 'diary': load('diary.csv'),
+            'visits': load('visits.csv'), 'visit_mode': 'registro', 'demo': True,
+            'source': '4 registros fictícios (substituíveis pelo seu Excel)',
+        }
+    return st.session_state['demo_dataset']
+
+
+def demo_replace_dataset(parsed):
+    if not demo_mode() or st.session_state.get('role') != 'admin':
+        raise PermissionError('A importação de demonstração exige perfil administrador.')
+    st.session_state['demo_dataset'] = parsed
+
+
+def _demo_data():
+    if not demo_mode():
+        raise PermissionError('Operação de demonstração indisponível no ambiente real.')
+    if st.session_state.get('role') != 'admin':
+        raise PermissionError('Apenas o administrador pode editar os dados da sessão.')
+    return load_demo()
 
 
 def load_live():
@@ -80,15 +100,24 @@ def load_live():
 
 
 @st.cache_data(ttl=45, show_spinner=False)
+def _load_live_cached():
+    return load_live()
+
+
 def load_all():
-    return load_demo() if demo_mode() else load_live()
+    # IMPORTANTE: não armazenar dados privados da sessão em cache de uso global.
+    return load_demo() if demo_mode() else _load_live_cached()
+
+
+def clear_data_cache():
+    _load_live_cached.clear()
 
 
 def require_write():
-    if demo_mode() or not google_ready():
-        raise PermissionError('Escrita indisponível em modo demonstração ou sem conta Google.')
     if st.session_state.get('role') != 'admin':
         raise PermissionError('Apenas administradores podem alterar dados.')
+    if not demo_mode() and not google_ready():
+        raise PermissionError('Conta de serviço Google Sheets não configurada.')
 
 
 def _sheet(gid):
@@ -119,30 +148,59 @@ def _write_values(ws, row_num, old, new, columns):
 
 def create_task(values):
     require_write()
+    if demo_mode():
+        dataset = _demo_data()
+        task_id = new_task_id([r['ID da Tarefa'] for r in dataset['tasks']])
+        dataset['tasks'].append({c: safe_user_entry(task_id if c == 'ID da Tarefa' else values.get(c, '')) for c in TASK_COLUMNS})
+        return task_id
     ws = _sheet(TASKS_GID)
     recs = read_records(ws, TASK_COLUMNS)
     task_id = new_task_id([r['ID da Tarefa'] for r in recs])
     data = dict(values, **{'ID da Tarefa': task_id})
     row = [safe_user_entry(data.get(c, '')) for c in TASK_COLUMNS]
     ws.append_row(row, value_input_option='USER_ENTERED', table_range='A:L')
-    load_all.clear()
+    clear_data_cache()
     return task_id
 
 
 def update_task(task_id, previous, values):
     require_write()
+    if demo_mode():
+        dataset = _demo_data()
+        rows = [r for r in dataset['tasks'] if r['ID da Tarefa'] == task_id]
+        if len(rows) != 1:
+            raise ValueError('Atividade não encontrada ou duplicada.')
+        old = rows[0]
+        if any(str(old.get(c, '')).strip() != str(previous.get(c, '')).strip() for c in TASK_COLUMNS):
+            raise ValueError('Os dados mudaram nesta sessão. Atualize antes de editar.')
+        old.update({c: safe_user_entry(values.get(c, '')) for c in TASK_COLUMNS})
+        return 1
     ws = _sheet(TASKS_GID)
     live = _find_row(ws, task_id)
     if any(str(live[c]).strip() != str(previous.get(c, '')).strip() for c in TASK_COLUMNS):
         raise ValueError('A atividade mudou na planilha desde sua abertura. Recarregue antes de editar.')
     changes = _write_values(ws, live['__sheet_row'], live, values, TASK_COLUMNS)
-    load_all.clear()
+    clear_data_cache()
     return changes
 
 
 def add_diary_and_update(row_values, update_current=False):
     require_write()
     task_id = str(row_values['ID da Tarefa'])
+    if demo_mode():
+        dataset = _demo_data()
+        matched = [r for r in dataset['tasks'] if r['ID da Tarefa'] == task_id]
+        if len(matched) != 1:
+            raise ValueError('Atividade inexistente ou duplicada.')
+        record = {c: safe_user_entry(row_values.get(c, '')) for c in DIARY_COLUMNS}
+        if any(all(x.get(c, '') == record[c] for c in DIARY_COLUMNS) for x in dataset['diary']):
+            raise ValueError('Relato idêntico já registrado nesta sessão.')
+        dataset['diary'].append(record)
+        if update_current:
+            matched[0]['Fase'] = record['Fase Atualizada']
+            matched[0]['Status'] = record['Status Atualizado']
+        return
+
     ws_tasks = _sheet(TASKS_GID)
     live_task = _find_row(ws_tasks, task_id)
     ws_diary = _sheet(DIARY_GID)
@@ -159,12 +217,27 @@ def add_diary_and_update(row_values, update_current=False):
         new['Fase'] = row_values['Fase Atualizada']
         new['Status'] = row_values['Status Atualizado']
         _write_values(ws_tasks, live_task['__sheet_row'], live_task, new, TASK_COLUMNS)
-    load_all.clear()
+    clear_data_cache()
 
 
 def initialize_visits_from_tasks(tasks):
     """Cria uma aba, importando só pares únicos de data + base. Não altera abas existentes."""
     require_write()
+    if demo_mode():
+        dataset = _demo_data()
+        if dataset['visit_mode'] == 'registro':
+            raise ValueError('O registro de visitas já foi criado na demonstração.')
+        from datetime import date
+        imported = visits_from_tasks(task_frame(tasks), date(1900, 1, 1), date(2100, 1, 1), today_brazil())
+        dataset['visits'] = [{
+            'ID da Visita': f'VIS-{i:04d}', 'Data da Visita': r['Data'].strftime('%d/%m/%Y'),
+            'Base': r['Base'], 'Tipo': 'Presencial', 'ID da Tarefa vinculada': '',
+            'Resumo': 'Visita migrada das atividades (conferir)',
+            'Observações': 'Migração temporária: validar ocorrência presencial.',
+            'Responsável': '', 'Origem': 'Migração de tarefas (a validar)',
+        } for i, (_, r) in enumerate(imported.sort_values('Data').iterrows(), start=1)]
+        dataset['visit_mode'] = 'registro'
+        return len(dataset['visits'])
     book = connect()
     try:
         book.worksheet(VISIT_TAB)
@@ -188,12 +261,27 @@ def initialize_visits_from_tasks(tasks):
     if rows:
         ws.append_rows(rows, value_input_option='USER_ENTERED', table_range='A:I')
     ws.freeze(rows=1)
-    load_all.clear()
+    clear_data_cache()
     return len(rows)
 
 
 def add_visit(data):
     require_write()
+    if demo_mode():
+        dataset = _demo_data()
+        if dataset['visit_mode'] != 'registro':
+            raise ValueError('Primeiro inicialize o registro de visitas.')
+        records = dataset['visits']
+        if data['Tipo'] == 'Presencial' and any(
+            r['Data da Visita'] == data['Data da Visita']
+            and r['Base'] == data['Base'] and r['Tipo'] == 'Presencial' for r in records
+        ):
+            raise ValueError('Visita presencial já existe nessa base e data.')
+        ids = [int(r['ID da Visita'].split('-')[-1]) for r in records
+               if r['ID da Visita'].startswith('VIS-') and r['ID da Visita'].split('-')[-1].isdigit()]
+        visit_id = f'VIS-{max(ids, default=0)+1:04d}'
+        records.append({c: safe_user_entry(visit_id if c == 'ID da Visita' else data.get(c, '')) for c in VISIT_COLUMNS})
+        return visit_id
     book = connect()
     try:
         ws = book.worksheet(VISIT_TAB)
@@ -213,5 +301,5 @@ def add_visit(data):
     data = dict(data, **{'ID da Visita': visit_id})
     row = [safe_user_entry(data.get(col, '')) for col in VISIT_COLUMNS]
     ws.append_row(row, value_input_option='USER_ENTERED', table_range='A:I')
-    load_all.clear()
+    clear_data_cache()
     return visit_id

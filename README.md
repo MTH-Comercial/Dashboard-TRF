@@ -102,3 +102,16 @@ Esses números são da **cópia XLSX enviada**, e podem não coincidir com dados
 - Confirmar se a definição contratual de visita é **uma visita por base/dia**, ou se atendimentos distintos na mesma unidade e dia também devem contar.
 - Incluir campos `Data real de conclusão`, `Responsável`, `Horas técnicas`, `Tipo de atendimento` e, opcionalmente, `Fotos/Anexos` em uma revisão futura da planilha. Não foi criado um KPI temporal de conclusão sem essas informações.
 - Criar histórico de alterações por usuário ou migrar escrita para banco relacional com autenticação individual se o painel crescer.
+
+## 9. Avaliar com dados reais sem afetar a produção (versão de teste)
+
+A nova branch de teste permite **carregar o Excel privado diretamente pelo navegador**, sem incluir sua planilha no repositório público:
+
+1. No Google Sheets, clique em **Arquivo → Fazer download → Microsoft Excel (.xlsx)**. Guarde o arquivo localmente.
+2. Abra `https://dashboard-transforma-v2-teste.streamlit.app`, entre na demonstração.
+3. Na barra lateral, abaixo de *Ambiente demonstrativo*, escolha **Importar Excel do dashboard** e selecione o arquivo baixado. O aplicativo valida as colunas e lê as abas de atividades e Diário de Bordo; a aba `Visitas_Contrato`, se existir, é opcional.
+4. O painel substitui as quatro tarefas fictícias pelos registros desse Excel. O upload não altera o Google Sheets nem é enviado ao GitHub. Ele permanece **somente em memória na sessão do Streamlit**, portanto, se perder a sessão, será necessário selecionar o arquivo novamente.
+5. Acesse **Gestão administrativa → Lançar trabalho do dia**. Escolha entre registrar atualização em uma atividade já existente e cadastrar um serviço novo. É possível editar tarefas, lançar diário e registrar visitas de teste. Os indicadores se ajustam após salvar.
+6. Em **Conferência / Exportação** você pode baixar CSVs dos registros alterados, caso queira guardar o resultado do teste.
+
+**Avisos:** Esta versão é uma demonstração com carga manual; ela **não sincroniza automaticamente** novos lançamentos feitos na planilha online. Todos os registros do teste ficam apenas na sessão, não no Google Sheets e nem no navegador permanentemente. Para sincronização e gravação real, use a configuração segura de conta de serviço descrita na seção 1 e publique a branch após validar as permissões. Não disponibilize a planilha ou credenciais no repositório público.
