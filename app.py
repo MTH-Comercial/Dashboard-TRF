@@ -406,9 +406,16 @@ def render_contract_progress():
     if raw['visit_mode'] == 'legado':
         st.info('**Contagem provisória:** datas de visitas informadas nas tarefas, uma visita por base/dia. Um registro de rotina não cria uma visita contratual adicional. Confirme o histórico antes da auditoria.')
     else:
-        imported_count = int(visits['Origem'].str.contains('Migração',case=False,na=False).sum())
-        if imported_count:
-            st.caption(f'{imported_count} registros migrados das atividades ainda precisam de validação documental.')
+        if st.session_state.get('role') == 'admin' and 'Validação' in visits:
+            pending_count = int(visits['Validação'].astype(str).str.strip().str.casefold().eq('a validar').sum())
+            if pending_count:
+                st.info(
+                    f'{pending_count} visitas históricas estão marcadas como "A validar". '
+                    'Isso indica apenas que os registros foram migrados e ainda não receberam confirmação manual; '
+                    'não significa que estejam incompletos. Confira a data, a unidade e o relato em '
+                    'Gestão administrativa → Registrar visita → Complementar / validar visita existente. '
+                    'Enquanto não forem descartadas, essas visitas continuam incluídas nos indicadores.'
+                )
 
 
 def contract_strip():
@@ -433,8 +440,7 @@ def contract_strip():
     if raw['visit_mode']=='legado':
         st.caption('Contagem **provisória**, inferida das datas de visitas na planilha. Conta qualquer finalidade presencial, não apenas visita de rotina; uma visita por base/dia.')
     else:
-        pending=int(visits['Validação'].eq('A validar').sum()) if 'Validação' in visits else 0
-        st.caption(f'Visitas presenciais de todas as finalidades (rotina, emergência, reuniões e projetos). {pending} registros importados aguardam conferência.' if pending else 'Visitas presenciais de todas as finalidades, com um lançamento por base e data.')
+        st.caption('Visitas presenciais registradas — rotina, emergências, reuniões e projetos — com uma visita contabilizada por base e data.')
 
 
 def render_executive():
@@ -520,6 +526,11 @@ def render_visits():
     else:
         show = contract_visits.sort_values('Data', ascending=False).copy()
         show['Data'] = show['Data'].map(lambda x:x.strftime('%d/%m/%Y'))
+        # Apresentação ao cliente: origem técnica da migração não é uma pendência da visita.
+        if st.session_state.get('role') != 'admin':
+            show['Origem'] = show['Origem'].map(
+                lambda value: 'Histórico importado' if 'migração' in str(value).casefold() else value
+            )
         st.dataframe(show.rename(columns={'Grupo':'Agrupamento contratual','Origem':'Fonte','Finalidade':'Objetivo da visita'}),
                      hide_index=True,use_container_width=True)
     if not visits.empty:
@@ -534,7 +545,10 @@ def render_visits():
         visit_record = view_rows[chosen_visit]
         with st.container(border=True):
             st.markdown(f"**{escape(str(visit_record.get('Resumo','Visita')))}**")
-            st.caption(f"{format_date(visit_record.get('Data da Visita'))} · {visit_record.get('Base','')} · {visit_record.get('Finalidade','')} · {visit_record.get('Validação','')}")
+            visit_info = f"{format_date(visit_record.get('Data da Visita'))} · {visit_record.get('Base','')} · {visit_record.get('Finalidade','')}"
+            if st.session_state.get('role') == 'admin':
+                visit_info += f" · Conferência: {visit_record.get('Validação','')}"
+            st.caption(visit_info)
             st.markdown('**O que foi realizado durante a visita**')
             st.write(visit_record.get('Observações') or 'Relato geral ainda não informado.')
             if visit_record.get('ID da Tarefa vinculada'):
@@ -781,6 +795,15 @@ def admin_visit():
         chosen = st.selectbox('Selecione a visita já registrada', ids, format_func=name_of, key='visit_edit_id')
         rec = lookup[chosen]
         st.caption(f"Base: {rec.get('Base','')} · data: {format_date(rec.get('Data da Visita'))} · origem: {rec.get('Origem','')}")
+        if str(rec.get('Validação', '')).strip().casefold() == 'a validar':
+            st.info(
+                'Esta visita foi importada do histórico e ainda não teve confirmação manual. '
+                'Confira se a ida ocorreu, se data e unidade estão corretas e se o relato corresponde ao dia. '
+                'Selecione "Confirmada" quando estiver correto ou "Descartada" se a presença não ocorreu '
+                'ou foi registrada em duplicidade. Uma visita "A validar" ainda entra na contagem do contrato; '
+                'uma visita descartada deixa de ser contabilizada. '
+                'Se a data ou a unidade estiver errada, corrija o registro na planilha antes de confirmar.'
+            )
         with st.form(f'visit_edit_{chosen}'):
             summary = st.text_input('Assunto principal da visita', value=str(rec.get('Resumo','')), max_chars=250)
             observations = st.text_area(
@@ -792,9 +815,18 @@ def admin_visit():
                                   index=VISIT_PURPOSES.index(rec.get('Finalidade')) if rec.get('Finalidade') in VISIT_PURPOSES else 0)
             options = ['A validar','Confirmada','Descartada']
             initial = rec.get('Validação', 'A validar')
-            validation = b.selectbox('Conferência da visita',options,index=options.index(initial) if initial in options else 0,
-                                     help='Confirme a ida somente após verificar o registro histórico.')
-            responsible = st.text_input('Responsável', value=str(rec.get('Responsável','')))
+            validation = b.selectbox(
+                'Situação da conferência da visita', options,
+                index=options.index(initial) if initial in options else 0,
+                help='"A validar": migração ainda não revisada. "Confirmada": presença verificada. '
+                     '"Descartada": visita que não ocorreu ou está duplicada; deixa de contar para a meta.'
+            )
+            responsible = st.text_input(
+                'Profissional que realizou a visita (Mothé Engenharia)',
+                value=str(rec.get('Responsável','')),
+                help='Quem compareceu à unidade pela Mothé Engenharia. Gestores e demais participantes '
+                     'da Transforma podem ser citados no relato geral.'
+            )
             submit = st.form_submit_button('Salvar relato da visita', type='primary', use_container_width=True)
         if submit:
             if not summary.strip() or not observations.strip():
@@ -819,7 +851,12 @@ def admin_visit():
             'Relato geral do dia — o que foi feito, inclusive consultorias rápidas e orientações',
             height=260, placeholder='Descreva de forma objetiva os serviços, conversas técnicas, reuniões, decisões e acompanhamentos realizados na visita...',
             help='Não é necessário criar uma atividade ACT para cada orientação breve. Este relato pertence à visita.')
-        responsible = st.text_input('Responsável',value='Mothé Engenharia')
+        responsible = st.text_input(
+            'Profissional que realizou a visita (Mothé Engenharia)',
+            value='Igor Mothé',
+            help='Quem esteve presente pela Mothé Engenharia. Pessoas da Transforma que participaram '
+                 'de reuniões ou acompanharam a visita podem ser identificadas no relato geral.'
+        )
         submit = st.form_submit_button('Registrar visita e relato geral',type='primary',use_container_width=True)
     if submit:
         if not summary.strip() or not observations.strip():
@@ -846,8 +883,29 @@ def admin_quality():
     if not q.empty:
         st.dataframe(q,hide_index=True,use_container_width=True)
     else:
-        st.success('Não foram identificadas inconsistências pelas regras atuais.')
-    st.caption('O histórico de fases/status de uma mesma atividade é mantido normalmente. O status atual é a última situação declarada na ficha, enquanto o histórico mostra as transições. Tipos inferidos podem ser revisados individualmente.')
+        st.success('Nenhuma inconsistência de cadastro ACT foi encontrada pelas verificações atuais.')
+    st.caption('A verificação acima analisa os cadastros ACT. O histórico de fases/status de uma atividade é normal e não é considerado erro.')
+    if not visits.empty and 'Validação' in visits.columns:
+        st.markdown('##### Conferência de visitas históricas (VIS)')
+        states = visits['Validação'].astype(str).str.strip().str.casefold()
+        pending_visits = visits.loc[states.eq('a validar')].copy()
+        n_confirmed = int(states.eq('confirmada').sum())
+        left, right = st.columns(2)
+        left.metric('Visitas migradas pendentes de revisão manual', len(pending_visits))
+        right.metric('Visitas confirmadas', n_confirmed)
+        st.caption(
+            'Esta é uma verificação diferente da qualidade dos cadastros ACT. '
+            'As visitas "A validar" foram importadas da planilha anterior: não estão necessariamente erradas '
+            'nem precisam de documento extra. Confira presença, data, base e relato em '
+            'Registrar visita → Complementar / validar visita existente. '
+            'Se a visita não aconteceu ou está duplicada, marque "Descartada".'
+        )
+        if not pending_visits.empty:
+            st.dataframe(
+                pending_visits[['ID da Visita', 'Data da Visita', 'Base', 'Resumo']],
+                hide_index=True, use_container_width=True,
+            )
+    st.caption('Tipos inferidos podem ser revisados individualmente. Os registros de atualizações preservam o histórico de cada atividade.')
     def csv_export(df):
         out=io.StringIO()
         copy=df.copy()
@@ -914,5 +972,5 @@ elif page=='Gestão administrativa' and st.session_state['role']=='admin':
     render_admin()
 
 st.divider()
-st.caption('Mothé Engenharia • Painel Transforma • Dados reais atualizados a cada 45 segundos; na demonstração, as informações são locais à sessão e não alteram o Google Sheets.')
+st.caption('Mothé Engenharia • Painel Transforma • Gestão de engenharia e acompanhamento contratual.')
 
