@@ -264,50 +264,113 @@ def add_diary_and_update(row_values, update_current=False, waiting_reason=None):
     clear_data_cache()
 
 
+def visit_source_for_day(df_tasks, visit_date, base):
+    """Encontra o relato do dia, dando preferência à visita de rotina.
+
+    Não fabrica acontecimentos: transfere o texto original do registro ACT.
+    Uma visita da mesma base/data é representada por um registro contratual.
+    """
+    same = df_tasks[
+        df_tasks['Data da Visita_dt'].eq(visit_date)
+        & df_tasks['Base'].astype(str).str.strip().str.casefold().eq(str(base).strip().casefold())
+    ].copy()
+    if same.empty:
+        return {'ID da Tarefa vinculada': '', 'Resumo': 'Visita presencial (conferir)',
+                'Observações': ''}
+    preferences = {
+        'Visita de rotina': 0, 'Acompanhamento de campo': 1,
+        'Reunião/alinhamento': 2, 'Atividade técnica': 3,
+    }
+    same['_priority'] = same['Tipo de Registro'].map(lambda x: preferences.get(x, 4))
+    same['_has_note'] = same['Pendências/Observações'].astype(str).str.strip().ne('')
+    same = same.sort_values(['_has_note', '_priority'], ascending=[False, True], kind='stable')
+    preferred = same.iloc[0]
+    return {
+        'ID da Tarefa vinculada': str(preferred.get('ID da Tarefa', '')),
+        'Resumo': str(preferred.get('Descrição', '')).strip() or 'Visita presencial',
+        'Observações': str(preferred.get('Pendências/Observações', '')).strip(),
+    }
+
+
 def initialize_visits_from_tasks(tasks):
-    """Cria uma aba, importando só pares únicos de data + base. Não altera abas existentes."""
+    """Migra uma visita por base/data, aproveitando os relatos originais."""
     require_write()
+    from datetime import date
+    df_tasks = task_frame(tasks)
+    imported = visits_from_tasks(df_tasks, date(1900, 1, 1), date(2100, 1, 1), today_brazil())
+    ordered = imported.sort_values('Data')
+    generated = []
+    for i, (_, r) in enumerate(ordered.iterrows(), start=1):
+        source = visit_source_for_day(df_tasks, r['Data'], r['Base'])
+        generated.append({
+            'ID da Visita': f'VIS-{i:04d}',
+            'Data da Visita': r['Data'].strftime('%d/%m/%Y'),
+            'Base': r['Base'], 'Tipo': 'Presencial',
+            **source, 'Responsável': '',
+            'Origem': 'Migração de tarefas (a validar)',
+            'Finalidade': r.get('Finalidade', 'Outro'), 'Validação': 'A validar',
+        })
     if demo_mode():
         dataset = _demo_data()
         if dataset['visit_mode'] == 'registro':
             raise ValueError('O registro de visitas já foi criado na demonstração.')
-        from datetime import date
-        imported = visits_from_tasks(task_frame(tasks), date(1900, 1, 1), date(2100, 1, 1), today_brazil())
-        dataset['visits'] = [{
-            'ID da Visita': f'VIS-{i:04d}', 'Data da Visita': r['Data'].strftime('%d/%m/%Y'),
-            'Base': r['Base'], 'Tipo': 'Presencial', 'ID da Tarefa vinculada': '',
-            'Resumo': 'Visita migrada das atividades (conferir)',
-            'Observações': 'Migração temporária: validar ocorrência presencial.',
-            'Responsável': '', 'Origem': 'Migração de tarefas (a validar)',
-            'Finalidade': r.get('Finalidade','Outro'), 'Validação':'A validar',
-        } for i, (_, r) in enumerate(imported.sort_values('Data').iterrows(), start=1)]
+        dataset['visits'] = generated
         dataset['visit_mode'] = 'registro'
-        return len(dataset['visits'])
+        return len(generated)
+
     book = connect()
     try:
         book.worksheet(VISIT_TAB)
         raise ValueError('A aba de visitas já existe. Nada foi migrado.')
     except gspread.WorksheetNotFound:
         pass
-    from analytics import task_frame, visits_from_tasks
-    from datetime import date
-    df_tasks = task_frame(tasks)
-    imported = visits_from_tasks(df_tasks, date(1900,1,1), date(2100,1,1), today_brazil())
-    ws = book.add_worksheet(title=VISIT_TAB, rows=max(1000, len(imported)+30), cols=len(ALL_VISIT_COLUMNS))
+    ws = book.add_worksheet(title=VISIT_TAB, rows=max(1000, len(generated)+30), cols=len(ALL_VISIT_COLUMNS))
     ws.append_row(ALL_VISIT_COLUMNS, value_input_option='RAW')
-    rows = []
-    for idx, (_, r) in enumerate(imported.sort_values('Data').iterrows(), start=1):
-        rows.append([
-            f'VIS-{idx:04d}', r['Data'].strftime('%d/%m/%Y'), r['Base'], 'Presencial',
-            '', 'Visita migrada da planilha de atividades',
-            'Registro histórico inferido da data da visita de uma atividade. Validar antes da auditoria.',
-            '', 'Migração de tarefas (a validar)',r.get('Finalidade','Outro'),'A validar',
-        ])
+    rows = [[safe_user_entry(rec.get(col, '')) for col in ALL_VISIT_COLUMNS] for rec in generated]
     if rows:
         ws.append_rows(rows, value_input_option='USER_ENTERED', table_range='A:K')
     ws.freeze(rows=1)
     clear_data_cache()
-    return len(rows)
+    return len(generated)
+
+
+def update_visit(visit_id, previous, changes):
+    """Complementa o relato sem criar visita duplicada ou mexer na data/base."""
+    require_write()
+    allowed = {'Resumo', 'Observações', 'Responsável', 'Finalidade', 'Validação',
+               'ID da Tarefa vinculada'}
+    if not str(changes.get('Observações', '')).strip():
+        raise ValueError('Preencha o relato geral do que aconteceu na visita.')
+    if set(changes) - allowed:
+        raise ValueError('Campo de visita não permitido para atualização.')
+    if demo_mode():
+        dataset = _demo_data()
+        matches = [r for r in dataset['visits'] if r['ID da Visita'] == visit_id]
+        if len(matches) != 1:
+            raise ValueError('Visita não encontrada ou duplicada.')
+        existing = matches[0]
+        if any(str(existing.get(k, '')).strip() != str(previous.get(k, '')).strip()
+               for k in ALL_VISIT_COLUMNS):
+            raise ValueError('Os dados da visita mudaram. Recarregue antes de editar.')
+        existing.update({key: safe_user_entry(value) for key, value in changes.items()})
+        return len(changes)
+
+    book = connect()
+    ws = book.worksheet(VISIT_TAB)
+    ensure_visit_headers(ws)
+    candidates = [r for r in read_records(ws, ALL_VISIT_COLUMNS, required=VISIT_COLUMNS)
+                  if r['ID da Visita'] == visit_id]
+    if len(candidates) != 1:
+        raise ValueError('Visita não encontrada ou duplicada na planilha Google.')
+    current = candidates[0]
+    if any(str(current.get(k, '')).strip() != str(previous.get(k, '')).strip()
+           for k in ALL_VISIT_COLUMNS):
+        raise ValueError('A visita foi modificada na planilha. Atualize antes de salvar.')
+    updated = dict(current)
+    updated.update(changes)
+    changed = _write_values(ws, current['__sheet_row'], current, updated, ALL_VISIT_COLUMNS)
+    clear_data_cache()
+    return changed
 
 
 def add_visit(data):
