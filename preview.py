@@ -6,7 +6,7 @@ from __future__ import annotations
 from io import BytesIO
 import math
 import pandas as pd
-from analytics import TASK_COLUMNS, TASK_EXTRA_COLUMNS, DIARY_COLUMNS, VISIT_COLUMNS, format_date
+from analytics import TASK_COLUMNS, TASK_EXTRA_COLUMNS, DIARY_COLUMNS, VISIT_COLUMNS, VISIT_EXTRA_COLUMNS, format_date
 
 MAX_XLSX_SIZE = 8 * 1024 * 1024
 DATE_FIELDS = {'Data de Início', 'Data da Visita', 'Previsão de Conclusão', 'Data da Atualização'}
@@ -69,7 +69,8 @@ def parse_uploaded_workbook(file_bytes: bytes):
     available = TASK_COLUMNS + [c for c in TASK_EXTRA_COLUMNS if c in tasks_sheet.columns]
     tasks = _records(tasks_sheet, available)
     diary = _records(diary_sheet, DIARY_COLUMNS)
-    visits = _records(visits_sheet, VISIT_COLUMNS) if visits_sheet is not None else []
+    visit_fields = VISIT_COLUMNS + ([k for k in VISIT_EXTRA_COLUMNS if k in visits_sheet.columns] if visits_sheet is not None else [])
+    visits = _records(visits_sheet, visit_fields) if visits_sheet is not None else []
     if not tasks:
         raise ValueError('A planilha não contém atividades com ID válido.')
     ids = [t['ID da Tarefa'] for t in tasks]
@@ -82,4 +83,3 @@ def parse_uploaded_workbook(file_bytes: bytes):
         'source': f'Excel importado: {len(tasks)} atividades e {len(diary)} registros de diário',
         'tabs': {'activities': tasks_name, 'diary': diary_name, 'visits': visits_name},
     }
-
