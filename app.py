@@ -771,7 +771,7 @@ def admin_diary():
 
 def admin_visit():
     st.markdown('#### Registrar visita do contrato — ID VIS automático')
-    st.caption('Cada presença na base recebe VIS (nunca ACT). Registre no relato todas as orientações, consultorias, reuniões e serviços breves, mesmo sem abrir uma atividade técnica.')
+    st.caption('Cada presença na base recebe VIS (nunca ACT). Registre no relato todas as orientações, consultorias, reuniões e serviços breves, mesmo sem abrir uma atividade técnica. A referência na Transforma é quem acompanhou ou pode confirmar a presença; não é o engenheiro da Mothé.')
     if raw['visit_mode'] == 'legado':
         st.warning('A base ainda não possui a aba Visitas_Contrato. Você pode migrar as datas e os relatos históricos das atividades antes de cadastrar visitas.')
         checked = st.checkbox('Entendo que as visitas importadas são estimadas e precisam ser validadas.')
@@ -822,10 +822,12 @@ def admin_visit():
                      '"Descartada": visita que não ocorreu ou está duplicada; deixa de contar para a meta.'
             )
             responsible = st.text_input(
-                'Profissional que realizou a visita (Mothé Engenharia)',
+                'Acompanhante / referência na Transforma',
                 value=str(rec.get('Responsável','')),
-                help='Quem compareceu à unidade pela Mothé Engenharia. Gestores e demais participantes '
-                     'da Transforma podem ser citados no relato geral.'
+                help='Nome da pessoa da Transforma que acompanhou a visita ou pode confirmar que '
+                     'ela ocorreu. Opcional. Informar um nome não muda automaticamente a '
+                     'situação da conferência da visita.',
+                placeholder='Ex.: gestor ou colaborador da unidade'
             )
             submit = st.form_submit_button('Salvar relato da visita', type='primary', use_container_width=True)
         if submit:
@@ -852,10 +854,12 @@ def admin_visit():
             height=260, placeholder='Descreva de forma objetiva os serviços, conversas técnicas, reuniões, decisões e acompanhamentos realizados na visita...',
             help='Não é necessário criar uma atividade ACT para cada orientação breve. Este relato pertence à visita.')
         responsible = st.text_input(
-            'Profissional que realizou a visita (Mothé Engenharia)',
-            value='Igor Mothé',
-            help='Quem esteve presente pela Mothé Engenharia. Pessoas da Transforma que participaram '
-                 'de reuniões ou acompanharam a visita podem ser identificadas no relato geral.'
+            'Acompanhante / referência na Transforma',
+            value='',
+            help='Pessoa da Transforma que acompanhou a visita ou pode confirmar sua realização. '
+                 'Se ninguém acompanhou ou você não sabe a referência, deixe em branco. '
+                 'Esse campo não identifica o engenheiro da Mothé Engenharia.',
+            placeholder='Ex.: gestor ou colaborador da unidade'
         )
         submit = st.form_submit_button('Registrar visita e relato geral',type='primary',use_container_width=True)
     if submit:
