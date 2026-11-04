@@ -13,6 +13,7 @@ import streamlit as st
 from analytics import (
     BASES, CATEGORIES, PHASES, PRIORITIES, STATUSES, CLOSED,
     ALL_TASK_COLUMNS, TASK_EXTRA_COLUMNS, KIND_OPTIONS, WAITING_STATUSES, DEADLINE_KINDS,
+    display_status, effective_closed, ALL_VISIT_COLUMNS, VISIT_PURPOSES,
     delivery_frame, delivery_overview, is_radar,
     TASK_COLUMNS, DIARY_COLUMNS, VISIT_COLUMNS,
     contract_metrics, contract_window, diary_frame, format_date,
@@ -76,6 +77,18 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {
 .section-note { font-size: .81rem; color: #92A9C5; margin-bottom: .65rem; }
 .soft-badge { border-radius: 20px; padding: 3px 10px; background: #183A54;
   color: #88D1FF; font-size: .78rem; }
+.compact-kpi {background:linear-gradient(140deg,#16273E,#101B2B);border:1px solid #2D405B;
+  border-top:3px solid var(--accent);border-radius:15px;padding:16px 17px;
+  min-height:118px;display:flex;flex-direction:column;justify-content:space-between;margin-bottom:9px;}
+.compact-kpi-label {font-size:.84rem;color:#AEC3DD;font-weight:650;line-height:1.24}
+.compact-kpi-value {font-size:2rem;line-height:1.13;font-weight:760;color:#F0F6FF;letter-spacing:-.05em;margin:4px 0}
+.compact-kpi-detail {font-size:.72rem;color:#91A9C4;line-height:1.32;min-height:1.0rem}
+.mini-progress {height:8px;border-radius:8px;background:#24344B;overflow:hidden;margin:.45rem 0;}
+.mini-progress span {display:block;height:100%;border-radius:8px;background:#34A8EB;}
+.contract-strip {background:#122239;border:1px solid #29405E;border-radius:16px;padding:14px 17px;margin-bottom:8px;}
+.contract-strip-title {font-size:.83rem;color:#BDCEE2;font-weight:650}
+.contract-strip-number {font-size:1.45rem;font-weight:780;color:#F0F6FF}
+.contract-strip-foot {font-size:.72rem;color:#9FB6D0}
 </style>''', unsafe_allow_html=True)
 
 COLOR_STATUS = {
@@ -83,10 +96,40 @@ COLOR_STATUS = {
     'Pausado': '#F7B955', 'Aguardando Terceiros': '#EA7386',
     'Aguardando Terceiro/Compras': '#EA7386', 'Aguardando': '#F7B955',
     'Não Iniciado': '#8D9EB5', 'Agendado': '#B095EC',
+    'Realizado':'#35C99A','Realizada':'#35C99A','Concluído':'#35C99A',
     'Aguardando Cliente':'#F3B653', 'Aguardando Aprovação':'#F3B653',
     'Aguardando Materiais':'#F3B653', 'Em Validação':'#A5B8FB', 'Bloqueado':'#EA7386',
 }
 PLOT_FONT = dict(family='Inter, Arial, sans-serif', color='#C8D6E8', size=12)
+
+
+def kpi_card(label, value, detail='', accent='#35A8E9'):
+    """Um KPI realmente compacto, com a legenda no mesmo cartão."""
+    st.markdown(
+        f'<div class="compact-kpi" style="--accent:{accent}">'
+        f'<div class="compact-kpi-label">{escape(str(label))}</div>'
+        f'<div class="compact-kpi-value">{escape(str(value))}</div>'
+        f'<div class="compact-kpi-detail">{escape(str(detail))}</div>'
+        '</div>', unsafe_allow_html=True)
+
+
+def compact_table(data, *, key='', height=237):
+    """Todas as atividades no quadro, com rolagem limitada a cinco linhas visíveis."""
+    if data.empty:
+        st.info('Nenhum registro nesta seleção.')
+        return
+    order = data.copy()
+    date_col = 'Data de Início_dt'
+    if date_col in order.columns:
+        order = order.sort_values(date_col, ascending=False, na_position='last')
+    order['Situação'] = order.apply(lambda r: display_status(r.get('Tipo de Registro',''),r.get('Status','')),axis=1)
+    use = ['ID da Tarefa','Descrição','Base','Situação']
+    if 'Motivo de Espera' in order.columns and key == 'prioridades':
+        use += ['Motivo de Espera']
+    st.dataframe(order[use].rename(columns={'ID da Tarefa':'ID','Motivo de Espera':'Dependência'}),
+                 hide_index=True, use_container_width=True, height=height,
+                 column_config={'Descrição':st.column_config.TextColumn(width='large'),
+                                'Dependência':st.column_config.TextColumn(width='medium')})
 
 
 def style_figure(fig, height=350):
@@ -210,7 +253,7 @@ with st.sidebar:
         priorities = st.multiselect('Prioridade', priority_opts, default=priority_opts, key='priority_sidebar')
     st.divider()
     options = ['Visão executiva', 'Atividades e projetos', 'Visitas e contrato',
-               'Planejamento e backlog', 'Diário de bordo']
+               'Planejamento e backlog', 'Histórico de atividades']
     if st.session_state['role'] == 'admin':
         options += ['Gestão administrativa']
     page = st.radio('Navegação', options, label_visibility='collapsed')
@@ -265,11 +308,15 @@ def task_table(data):
     columns = ['ID da Tarefa','Descrição','Tipo de Registro','Base','Status',
                'Prioridade','Data de Início','Previsão de Conclusão']
     disp = data.copy()
-    disp['Ordenação'] = pd.to_datetime(disp['Data de Início_dt'], errors='coerce')
-    disp = disp.sort_values('Ordenação', ascending=False, na_position='last')
     if disp.empty:
         st.info('Nenhum registro para os filtros atuais.')
         return
+    if 'Data de Início_dt' in disp.columns:
+        disp['Ordenação'] = pd.to_datetime(disp['Data de Início_dt'], errors='coerce')
+        disp = disp.sort_values('Ordenação', ascending=False, na_position='last')
+    for col in columns:
+        if col not in disp.columns: disp[col] = ''
+    disp['Status'] = disp.apply(lambda r: display_status(r['Tipo de Registro'],r['Status']),axis=1)
     st.dataframe(disp[columns].rename(columns={
         'ID da Tarefa':'ID', 'Tipo de Registro':'Tipo',
         'Data de Início':'Início', 'Previsão de Conclusão':'Data de referência'}),
@@ -297,7 +344,7 @@ def task_detail(data, key='details'):
     with st.container(border=True):
         a,b,c = st.columns([2,1,1])
         a.markdown(f"**{r['Descrição']}**")
-        b.markdown(f"**Status:** {r['Status']}")
+        b.markdown(f"**Status:** {display_status(r['Tipo de Registro'],r['Status'])}")
         c.markdown(f"**Prioridade:** {r['Prioridade']}")
         st.caption(f"{r['Base']} • {r['Subárea']} • {r['Categoria']} • **{r['Tipo de Registro']}**")
         left,right = st.columns(2)
@@ -311,7 +358,7 @@ def task_detail(data, key='details'):
         st.markdown('**Pendências e observações**')
         st.write(r['Pendências/Observações'] or 'Nenhuma observação registrada.')
         hist = diary[diary['ID da Tarefa'] == chosen].copy()
-        st.markdown(f'**Diário de bordo ({len(hist)} atualizações)**')
+        st.markdown(f'**Histórico da atividade ({len(hist)} atualizações)**')
         if hist.empty:
             st.caption('Ainda não há atualizações no diário desta atividade.')
         else:
@@ -352,79 +399,78 @@ def render_contract_progress():
             st.caption(f'{imported_count} registros migrados das atividades ainda precisam de validação documental.')
 
 
+def contract_strip():
+    """Cumprimento do contrato logo após o título, em uma única linha escaneável."""
+    total=contract['total']
+    st.markdown('### Presença técnica e contrato')
+    rows=[
+       ('Total de visitas',total,116,'no ciclo contratual'),
+       ('Macaé',contract['macae'],104,'visitas na unidade'),
+       ('Açu + Gradim',contract['inter'],12,'visitas nas demais bases'),
+    ]
+    cols=st.columns(3)
+    for col,(label,n,goal,note) in zip(cols,rows):
+        fraction=max(0,min(n/goal,1))
+        with col:
+            st.markdown('<div class="contract-strip">'
+                f'<div class="contract-strip-title">{escape(label)}</div>'
+                f'<div class="contract-strip-number">{n} <span style="font-size:.83rem;color:#93AFCE">/ {goal}</span></div>'
+                f'<div class="mini-progress"><span style="width:{fraction*100:.1f}%"></span></div>'
+                f'<div class="contract-strip-foot">{fraction*100:.1f}% cumpridos · faltam {max(goal-n,0)} · {escape(note)}</div>'
+                '</div>',unsafe_allow_html=True)
+    if raw['visit_mode']=='legado':
+        st.caption('Contagem **provisória**, inferida das datas de visitas na planilha. Conta qualquer finalidade presencial, não apenas visita de rotina; uma visita por base/dia.')
+    else:
+        pending=int(visits['Validação'].eq('A validar').sum()) if 'Validação' in visits else 0
+        st.caption(f'Visitas presenciais de todas as finalidades (rotina, emergência, reuniões e projetos). {pending} registros importados aguardam conferência.' if pending else 'Visitas presenciais de todas as finalidades, com um lançamento por base e data.')
+
+
 def render_executive():
     header('Visão executiva | Transforma',
-           'Entregas de engenharia, visitas, demandas abertas e obstáculos para conclusão.')
-    summary = delivery_overview(filtered, today)
-    st.caption('**Entregas técnicas** não incluem visitas de rotina e reuniões. Os filtros laterais atuam sobre atividades; as metas contratuais consideram todas as bases.')
-    cols = st.columns(4)
-    for col,label,value,detail in [
-        (cols[0],'Entregas técnicas', summary['deliveries'], 'exclui visitas de rotina'),
-        (cols[1],'Entregas concluídas',summary['done'], f"{summary['done']/summary['deliveries']:.0%} do total técnico" if summary['deliveries'] else 'sem entregas técnicas'),
-        (cols[2],'Em andamento',summary['active'],'atividades técnicas em execução'),
-        (cols[3],'Aguardando terceiros/decisão',summary['waiting'],'inclui pausadas e bloqueadas'),
-    ]:
-        with col:
-            st.metric(label,value)
-            st.caption(detail)
-    cols=st.columns(5)
-    for col,label,value,detail in [
-        (cols[0],'Visitas de rotina',summary['routine_visits'],'linhas de rotina, não visitas contratuais'),
-        (cols[1],'Reuniões/alinhamentos',summary['meetings'],'registros separados de entregas'),
-        (cols[2],'Demandas no radar',summary['radar'],'planejamentos ainda em acompanhamento'),
-        (cols[3],'Emergências técnicas',summary['emergencies'],'registros com prioridade emergencial'),
-        (cols[4],'Compromissos vencidos',summary['late_commitments'],'somente prazo confirmado e aberto'),
-    ]:
-        with col:
-            st.metric(label,value)
-            st.caption(detail)
-    if summary['unclassified_kinds']:
-        st.caption(f"Classificação sugerida automaticamente para {summary['unclassified_kinds']} registros históricos sem tipo explícito. Revise na gestão administrativa se necessário.")
-    st.write('')
+           'O contrato em números: presença em campo, entregas técnicas e próximas ações.')
+    contract_strip()
+    summary=delivery_overview(filtered,today)
+    st.markdown('### Entregas de engenharia')
+    cols=st.columns(4)
+    items=[
+        ('Concluídas',summary['done'],f"de {summary['deliveries']} entregas técnicas",'#35C99A'),
+        ('Em execução',summary['active'],'serviços em andamento','#35A8E9'),
+        ('Aguardando',summary['waiting'],'terceiros, materiais ou decisão','#F7B955'),
+        ('No radar',summary['radar'],'demandas recebidas e planejadas','#A69BE9'),
+    ]
+    for col,(label,value,detail,accent) in zip(cols,items):
+        with col: kpi_card(label,value,detail,accent)
     left,right=st.columns([1,1])
     with left:
-        with st.container(border=True):
-            st.markdown('**O que foi registrado por tipo**')
-            by_type=filtered['Tipo de Registro'].value_counts().reset_index()
-            by_type.columns=['Tipo','Registros']
-            if by_type.empty:
-                st.info('Nenhum registro.')
-            else:
-                fig=px.bar(by_type, x='Registros', y='Tipo', orientation='h',text='Registros',
-                           color_discrete_sequence=['#35A8E9'])
-                fig.update_layout(showlegend=False,xaxis_title='',yaxis_title='')
-                st.plotly_chart(style_figure(fig,320),use_container_width=True)
+        st.markdown('#### Entregas concluídas')
+        st.caption('Lista completa com rolagem interna · últimas atividades no topo')
+        closed=delivery_frame(filtered)
+        closed=closed[closed['Status'].isin(CLOSED)]
+        compact_table(closed,key='concluidas')
     with right:
-        with st.container(border=True):
-            st.markdown('**Situação das entregas técnicas**')
-            deliveries=delivery_frame(filtered)
-            by_status=deliveries['Status'].value_counts().reset_index()
-            by_status.columns=['Status','Quantidade']
-            if by_status.empty:
-                st.info('Sem entregas técnicas neste filtro.')
-            else:
-                fig=px.bar(by_status,x='Quantidade',y='Status',orientation='h',
-                           color='Status',text='Quantidade',color_discrete_map=COLOR_STATUS)
-                fig.update_layout(showlegend=False,xaxis_title='',yaxis_title='')
-                st.plotly_chart(style_figure(fig,320),use_container_width=True)
-    st.subheader('Entregas concluídas — o que já foi feito')
-    completed = delivery_frame(filtered)
-    completed=completed[completed['Status'].isin(CLOSED)]
-    if completed.empty:
-        st.info('Nenhuma entrega técnica concluída com os filtros aplicados.')
-    else:
-        task_table(completed.head(12))
-    st.caption('Sem data de conclusão histórica na planilha: exibimos serviços resolvidos, não produtividade por mês de conclusão.')
-    st.subheader('Prioridades atuais e próximos passos')
-    open_ = delivery_frame(filtered)
-    open_ = open_[~open_['Status'].isin(CLOSED)]
-    if open_.empty:
-        st.success('Nenhuma entrega técnica aberta neste filtro.')
-    else:
-        task_table(open_.head(12))
-    st.write('')
-    render_contract_progress()
-
+        st.markdown('#### Prioridades atuais')
+        st.caption('Entregas ainda abertas · acompanhe dependências e pendências')
+        opened=delivery_frame(filtered)
+        opened=opened[~opened['Status'].isin(CLOSED)]
+        compact_table(opened,key='prioridades')
+    with st.expander('Detalhamento: visitas de rotina, reuniões, emergências e composição do trabalho', expanded=False):
+        subcols=st.columns(4)
+        for col,(label,value,note) in zip(subcols,[
+            ('Visitas de rotina',summary['routine_visits'],'registros de rotina (não total de visitas)'),
+            ('Reuniões',summary['meetings'],'alinhamentos registrados'),
+            ('Emergências técnicas',summary['emergencies'],'prioridade emergencial'),
+            ('Acompanhamentos',summary['field_followups'],'visitas com objetivo técnico'),
+        ]):
+            with col: kpi_card(label,value,note)
+        st.caption('**Atenção:** o número de visitas contratuais no topo inclui toda ida presencial registrada, independentemente da finalidade. Os tipos abaixo classificam os registros de trabalho, não os dias em campo.')
+        distribution=filtered['Tipo de Registro'].value_counts().reset_index()
+        distribution.columns=['Tipo','Registros']
+        if not distribution.empty:
+            fig=px.bar(distribution,x='Registros',y='Tipo',orientation='h',text='Registros',color_discrete_sequence=['#35A8E9'])
+            fig.update_layout(showlegend=False,xaxis_title='',yaxis_title='')
+            st.plotly_chart(style_figure(fig,270),use_container_width=True)
+    if summary['unclassified_kinds']:
+        st.caption(f'{summary["unclassified_kinds"]} tipos históricos foram sugeridos automaticamente e ainda podem ser revisados na edição dos registros.')
 
 def render_tasks():
     header('Atividades, visitas e projetos',
@@ -457,13 +503,14 @@ def render_visits():
            'Acompanhamento das visitas técnicas e evidências de atendimento por unidade.',
            'PRESENÇA EM CAMPO')
     render_contract_progress()
+    st.caption('Uma ida presencial conta como visita contratual independentemente da finalidade: rotina, emergência, reunião, levantamento ou acompanhamento técnico.')
     st.subheader('Visitas contabilizadas no ciclo')
     if contract_visits.empty:
         st.info('Ainda não foram registradas visitas dentro do ciclo selecionado.')
     else:
         show = contract_visits.sort_values('Data', ascending=False).copy()
         show['Data'] = show['Data'].map(lambda x:x.strftime('%d/%m/%Y'))
-        st.dataframe(show.rename(columns={'Grupo':'Agrupamento contratual','Origem':'Fonte'}),
+        st.dataframe(show.rename(columns={'Grupo':'Agrupamento contratual','Origem':'Fonte','Finalidade':'Objetivo da visita'}),
                      hide_index=True,use_container_width=True)
     st.subheader('Agenda de visitas vinculadas às atividades')
     future = tasks[tasks['Data da Visita_dt'].map(lambda d:d is not None and d > today)].copy()
@@ -510,8 +557,8 @@ def render_planning():
 
 
 def render_diary():
-    header('Diário de bordo',
-           'Linha do tempo resumida, com o nome da atividade visível em cada registro.',
+    header('Histórico de atividades',
+           'Atualizações, decisões e intervenções por atividade, com histórico preservado.',
            'RASTREABILIDADE')
     if diary.empty:
         st.info('Nenhum lançamento disponível.')
@@ -577,7 +624,7 @@ def admin_new_task():
         a,b,c=st.columns(3)
         phase=a.selectbox('Fase',PHASES,index=0)
         priority=b.selectbox('Prioridade',PRIORITIES)
-        status=c.selectbox('Status',STATUSES,index=0)
+        status=c.selectbox('Situação atual',STATUSES,index=0)
         has_deadline=st.checkbox('Informar prazo de conclusão?',value=False)
         deadline=st.date_input('Previsão de conclusão',today,format='DD/MM/YYYY',disabled=not has_deadline)
         deadline_kind=st.selectbox('Natureza da data / compromisso',DEADLINE_KINDS,index=0,
@@ -596,7 +643,7 @@ def admin_new_task():
                  'Base':base,'Subárea':subarea,'Categoria':category,
                  'Descrição':description,'Fase':phase,'Prioridade':priority,
                  'Previsão de Conclusão':format_date(deadline) if has_deadline else '',
-                 'Status':status,'Pendências/Observações':notes,
+                 'Status':('Realizado' if status=='Resolvido' and kind!='Atividade técnica' else status),'Pendências/Observações':notes,
                  'Tipo de Registro':kind,'Condição do Prazo':deadline_kind,
                  'Motivo de Espera':waiting_reason}
             _commit(create_task,row)
@@ -645,14 +692,14 @@ def admin_edit_task():
               'Base':base,'Subárea':subarea,'Categoria':category,
               'Descrição':description,'Fase':phase,'Prioridade':priority,
               'Previsão de Conclusão':format_date(deadline) if has_deadline else '',
-              'Status':status,'Pendências/Observações':notes,
+              'Status':('Realizado' if status=='Resolvido' and kind!='Atividade técnica' else status),'Pendências/Observações':notes,
               'Tipo de Registro':kind,'Condição do Prazo':deadline_kind,
               'Motivo de Espera':waiting_reason}
         _commit(update_task,chosen,previous,data)
 
 
 def admin_diary():
-    st.markdown('#### Novo relato do diário de bordo')
+    st.markdown('#### Registrar atualização da atividade')
     st.caption('Informe o que você fez hoje em uma tarefa existente. Você pode também atualizar a fase e o status no mesmo lançamento.')
     if tasks.empty:
         st.warning('Cadastre ao menos uma atividade primeiro.')
@@ -676,13 +723,14 @@ def admin_diary():
             st.error('Descreva o que aconteceu.')
         else:
             record={'Data da Atualização':format_date(dt),'ID da Tarefa':chosen,
-                    'Fase Atualizada':phase,'Status Atualizado':status,
+                    'Fase Atualizada':phase,'Status Atualizado':('Realizado' if status=='Resolvido' and t['Tipo de Registro']!='Atividade técnica' else status),
                     'Descrição do que aconteceu':text}
             _commit(add_diary_and_update,record,sync,waiting_reason)
 
 
 def admin_visit():
     st.markdown('#### Registrar visita contratual')
+    st.caption('Registre uma única visita presencial por base e data, independentemente da finalidade. Várias atividades no mesmo dia não multiplicam visitas contratuais.')
     if raw['visit_mode']=='legado':
         st.warning('O arquivo ainda não possui a aba Visitas_Contrato. Você pode simular a migração do histórico antes de registrar novas visitas.')
         st.markdown('**Criar controle de visitas e importar histórico**')
@@ -696,6 +744,7 @@ def admin_visit():
         dt=a.date_input('Data da visita',today,format='DD/MM/YYYY')
         base=b.selectbox('Base visitada',BASES[:-1])
         tipo=c.selectbox('Tipo de atendimento',['Presencial','Remoto'])
+        purpose=st.selectbox('Finalidade da visita', VISIT_PURPOSES, help='Uma visita pode ser de rotina, emergência, levantamento, reunião ou acompanhamento. Todas as presenciais validadas contam no contrato.')
         related=st.selectbox('Atividade vinculada (opcional)',['Sem vínculo']+sorted(tasks['ID da Tarefa'].tolist()))
         summary=st.text_input('Resumo do objetivo da visita')
         observations=st.text_area('Observações e evidências',height=130)
@@ -710,22 +759,24 @@ def admin_visit():
             record={'Data da Visita':format_date(dt),'Base':base,'Tipo':tipo,
                     'ID da Tarefa vinculada':'' if related=='Sem vínculo' else related,
                     'Resumo':summary,'Observações':observations,
-                    'Responsável':responsible,'Origem':'Registro manual'}
+                    'Responsável':responsible,'Origem':'Registro manual',
+                    'Finalidade':purpose,'Validação':'Confirmada'}
             _commit(add_visit,record)
 
 
 def admin_quality():
-    st.markdown('#### Qualidade de dados e exportação')
+    st.markdown('#### Conferência de registros e exportação')
+    st.caption('Este espaço mostra cadastros incompletos e permite exportar os dados; atualizações históricas de fase/status são normais e não são erros.')
     q=quality_issues(tasks)
     a,b,c=st.columns(3)
-    a.metric('Diferenças fase/status',int(q['Aviso'].eq('Fase e status diferentes').sum()) if not q.empty else 0)
+    a.metric('Cadastros que merecem conferência',len(q))
     b.metric('Tipos históricos a conferir',int(tasks['Tipo inferido'].sum()))
     c.metric('Total de registros no diário',len(diary))
     if not q.empty:
         st.dataframe(q,hide_index=True,use_container_width=True)
     else:
         st.success('Não foram identificadas inconsistências pelas regras atuais.')
-    st.caption('Os registros históricos sem Tipo de Registro foram classificados conservadoramente, apenas para exibição. Use Editar atividade para revisar e salvar o tipo correto. Nem toda tarefa precisa de data.')
+    st.caption('O histórico de fases/status de uma mesma atividade é mantido normalmente. O status atual é a última situação declarada na ficha, enquanto o histórico mostra as transições. Tipos inferidos podem ser revisados individualmente.')
     def csv_export(df):
         out=io.StringIO()
         copy=df.copy()
@@ -765,7 +816,7 @@ def render_admin():
         admin_quality()
         return
     admin_pages = ['📝 Lançar trabalho do dia', '＋ Nova atividade', '✎ Editar atividade',
-                   '▤ Diário de bordo', '◉ Registrar visita', '✓ Conferência / Exportação']
+                   '▤ Atualizações', '◉ Registrar visita', '✓ Conferência / Exportação']
     action = st.radio('Escolha uma operação', admin_pages, horizontal=True,
                       label_visibility='collapsed', key='admin_action')
     st.write('')
@@ -784,7 +835,7 @@ elif page=='Visitas e contrato':
     render_visits()
 elif page=='Planejamento e backlog':
     render_planning()
-elif page=='Diário de bordo':
+elif page=='Histórico de atividades':
     render_diary()
 elif page=='Gestão administrativa' and st.session_state['role']=='admin':
     render_admin()
