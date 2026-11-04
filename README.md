@@ -115,3 +115,74 @@ A nova branch de teste permite **carregar o Excel privado diretamente pelo naveg
 6. Em **Conferência / Exportação** você pode baixar CSVs dos registros alterados, caso queira guardar o resultado do teste.
 
 **Avisos:** Esta versão é uma demonstração com carga manual; ela **não sincroniza automaticamente** novos lançamentos feitos na planilha online. Todos os registros do teste ficam apenas na sessão, não no Google Sheets e nem no navegador permanentemente. Para sincronização e gravação real, use a configuração segura de conta de serviço descrita na seção 1 e publique a branch após validar as permissões. Não disponibilize a planilha ou credenciais no repositório público.
+
+## V3 — melhorias de 04/11/2026 (branch de testes)
+
+A versão de teste `melhoria/dashboard-v2-gestao-online` mantém o endereço
+`https://dashboard-transforma-v2-teste.streamlit.app`. **Não alterar `main` sem
+configurar as credenciais e testar a escrita Google.** O domínio oficial do cliente
+continua apontando para a versão anterior até uma implantação deliberada.
+
+### Indicadores corretos sem inflar entregas
+
+Os registros da planilha agora aparecem em **cinco naturezas**, separadas do status
+ou prioridade: `Atividade técnica`, `Visita de rotina`, `Reunião/alinhamento`,
+`Acompanhamento de campo` e `Demanda no radar`. Somente `Atividade técnica`
+conta como entrega de engenharia. O cadastro e a edição permitem escolher o tipo.
+
+No histórico sem o novo campo, a exibição aplica regra **provisória e conservadora**:
+- `Visita pré marcada`/`Visita pré-marcada`/`Visita de rotina` → visita de rotina.
+- Descrições que começam com `Reunião`/`Alinhamento` → reunião.
+- Prioridade `Planejamento (Futuro)` em registro aberto → demanda no radar.
+- Demais registros → atividade técnica, **a revisar individualmente**, pois a
+  descrição nem sempre permite inferir o tipo correto.
+
+Nenhum histórico é reclassificado na planilha apenas pela leitura.
+O menu **Gestão administrativa → Editar atividade** permite confirmar cada tipo.
+A contagem contratual de visitas continua **independente** da quantidade de linhas
+rotuladas como visita de rotina, para evitar dupla contagem. Até que haja a aba
+`Visitas_Contrato`, a contagem por data/base permanece indicada como provisória.
+
+### Datas de prazo sem penalização indevida
+
+Agora o formulário inclui `Condição do Prazo`: `Sem prazo definido`, `Estimativa
+interna`, `Compromisso confirmado`, `Dependente de terceiros` e `Histórico sem
+classificação`. O indicador **Compromissos vencidos** considera apenas entregas
+abertas com data anterior a hoje e `Compromisso confirmado`.
+
+Datas da planilha antiga são exibidas como `Histórico sem classificação`, e **não**
+como atrasos confirmados. A condição e a data são campos distintos. Há também o
+campo `Motivo de Espera`, que pode ser atualizado junto ao relato diário.
+O status recebe opções adicionais (aguardando cliente/aprovação/materiais,
+bloqueado e em validação). As opções antigas permanecem compatíveis.
+
+### Campos adicionais no Google Sheets
+
+A base antiga tem 12 colunas obrigatórias (A:L). Na primeira gravação de uma nova
+atividade ou edição com os novos campos, a aplicação acrescenta cabeçalhos
+na primeira linha **ao final das colunas existentes** (não regrava dados antigos):
+
+- `Tipo de Registro`
+- `Condição do Prazo`
+- `Motivo de Espera`
+
+Na demonstração, o arquivo `.xlsx` com as 12 colunas continua válido; as novas
+informações de lançamentos temporários podem ser exportadas por CSV da área
+administrativa. No Google Sheets definitivo, o primeiro lançamento exige a conta
+de serviço configurada como Editora. Faça backup da planilha antes de ativar.
+
+### Interface do cliente e fluxo de uso
+
+A barra lateral compacta traz busca e filtros **no topo**, navegação logo abaixo,
+e o upload de Excel dentro de um bloco expansível ao fim. O cabeçalho de todas as
+páginas recebe afastamento para não ficar sob a barra de ferramentas do Streamlit.
+A visão executiva apresenta entregas técnicas realizadas e pendentes separadas de
+rotina, reuniões, radar e cumprimento do contrato. O diário mostra **data, ID e
+nome da atividade** no título de cada relato recolhido; exibe 10 registros por
+página para evitar rolagem excessiva.
+
+### Limitações de verificação
+
+Testes de unidade validam classificação, importação de Excel, regras de visitas,
+segurança e prazo. Ainda são necessários ensaio visual no navegador e teste real
+com a conta de serviço do Google antes de integrar a versão ao domínio do cliente.

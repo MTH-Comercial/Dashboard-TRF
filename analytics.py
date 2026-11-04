@@ -11,6 +11,24 @@ TASK_COLUMNS = [
     'Categoria', 'Descrição', 'Fase', 'Prioridade', 'Previsão de Conclusão',
     'Status', 'Pendências/Observações',
 ]
+# Os três campos complementares são opcionais para as planilhas antigas.
+# Permanecem após as 12 colunas originais; nunca são usados para alterar registros históricos automaticamente.
+TASK_EXTRA_COLUMNS = ['Tipo de Registro', 'Condição do Prazo', 'Motivo de Espera']
+ALL_TASK_COLUMNS = TASK_COLUMNS + TASK_EXTRA_COLUMNS
+KIND_OPTIONS = [
+    'Atividade técnica', 'Visita de rotina', 'Reunião/alinhamento',
+    'Acompanhamento de campo', 'Demanda no radar',
+]
+WAITING_STATUSES = {
+    'Aguardando', 'Aguardando Cliente', 'Aguardando Aprovação',
+    'Aguardando Terceiros', 'Aguardando Terceiro/Compras',
+    'Aguardando Materiais', 'Aguardando Material/Compras', 'Pausado', 'Bloqueado',
+}
+DEADLINE_KINDS = [
+    'Sem prazo definido', 'Estimativa interna', 'Compromisso confirmado',
+    'Dependente de terceiros', 'Histórico sem classificação',
+]
+
 DIARY_COLUMNS = [
     'Data da Atualização', 'ID da Tarefa', 'Fase Atualizada',
     'Status Atualizado', 'Descrição do que aconteceu',
@@ -23,13 +41,14 @@ BASES = ['Macaé/RJ', 'Porto do Açu - São João da Barra/RJ',
          'Gradim - São Gonçalo/RJ', 'A definir']
 STATUSES = [
     'Não Iniciado', 'Agendado', 'Em Andamento', 'Pausado',
-    'Aguardando', 'Aguardando Terceiros', 'Aguardando Terceiro/Compras', 'Resolvido',
+    'Aguardando', 'Aguardando Cliente', 'Aguardando Aprovação', 'Aguardando Materiais',
+    'Aguardando Terceiros', 'Aguardando Terceiro/Compras', 'Em Validação', 'Bloqueado', 'Resolvido',
 ]
 PHASES = [
     'Não Iniciado', 'Levantamento em Campo', 'Engenharia de Escritório',
-    'Em Aprovação (Cliente)', 'Em Execução', 'Aguardando Terceiros', 'Concluído',
+    'Em Aprovação (Cliente)', 'Em Execução', 'Em Testes/Validação', 'Aguardando Terceiros', 'Concluído',
 ]
-PRIORITIES = ['Rotina', 'Melhoria', 'Emergencial', 'Planejamento (Futuro)']
+PRIORITIES = ['Rotina', 'Melhoria', 'Baixa', 'Normal', 'Alta', 'Emergencial', 'Planejamento (Futuro)']
 CATEGORIES = [
     'Consultoria, Estudos e Pareceres', 'Gestão e Treinamento',
     'Manutenção Corretiva/Emergencial', 'Projetos e Documentação',
@@ -85,13 +104,31 @@ def frame(rows, columns):
     for col in columns:
         if col not in result.columns:
             result[col] = ''
-        result[col] = result[col].map(lambda x: '' if x is None else str(x).strip())
+        result[col] = result[col].map(lambda x: '' if x is None or (not isinstance(x,(list,dict)) and pd.isna(x)) else str(x).strip())
     return result[columns].copy()
 
 
+def infer_record_kind(description, priority='', status=''):
+    """Inferência CONSERVADORA: apenas visitas pré-marcadas e reuniões explícitas."""
+    text = re.sub(r'\s+', ' ', str(description).casefold().strip())
+    if re.search(r'visita\s+pr[eé][\s-]*marcada|visita\s+de\s+rotina', text):
+        return 'Visita de rotina'
+    if re.match(r'^(reuni[aã]o|alinhamento\b)', text):
+        return 'Reunião/alinhamento'
+    if priority == 'Planejamento (Futuro)' and status not in CLOSED:
+        return 'Demanda no radar'
+    return 'Atividade técnica'
+
+
 def task_frame(rows):
-    df = frame(rows, TASK_COLUMNS)
+    df = frame(rows, ALL_TASK_COLUMNS)
     df = df[df['ID da Tarefa'].ne('')].copy()
+    df['Tipo inferido'] = df['Tipo de Registro'].eq('')
+    for i, r in df[df['Tipo inferido']].iterrows():
+        df.loc[i, 'Tipo de Registro'] = infer_record_kind(r['Descrição'], r['Prioridade'], r['Status'])
+    df['Condição do Prazo'] = df.apply(
+        lambda r: r['Condição do Prazo'] or ('Histórico sem classificação' if parse_date(r['Previsão de Conclusão']) else 'Sem prazo definido'), axis=1)
+
     for name in ['Data de Início', 'Data da Visita', 'Previsão de Conclusão']:
         df[name + '_dt'] = df[name].map(parse_date)
     return df
@@ -205,6 +242,45 @@ def task_metrics(tasks, today=None):
     }
 
 
+def is_delivery(row):
+    return row.get('Tipo de Registro', '') == 'Atividade técnica'
+
+
+def delivery_frame(tasks):
+    """Somente entregas de engenharia contam como atividades técnicas."""
+    return tasks[tasks['Tipo de Registro'].eq('Atividade técnica')].copy()
+
+
+def is_radar(row):
+    return (row.get('Status', '') not in CLOSED
+            and (row.get('Tipo de Registro', '') == 'Demanda no radar'
+                 or row.get('Prioridade', '') == 'Planejamento (Futuro)'))
+
+
+def delivery_overview(tasks, today=None):
+    current = today or today_brazil()
+    deliveries = delivery_frame(tasks)
+    open_ = deliveries[~deliveries['Status'].isin(CLOSED)].copy()
+    waiting = open_[open_['Status'].isin(WAITING_STATUSES)]
+    radar = tasks[tasks.apply(is_radar, axis=1)]
+    commitments = open_[open_['Condição do Prazo'].eq('Compromisso confirmado')]
+    overdue_commitments = commitments[commitments['Previsão de Conclusão_dt'].map(
+        lambda d: d is not None and d < current)]
+    return {
+        'deliveries': len(deliveries),
+        'done': int(deliveries['Status'].isin(CLOSED).sum()),
+        'active': int(open_['Status'].eq('Em Andamento').sum()),
+        'waiting': len(waiting),
+        'radar': len(radar),
+        'routine_visits': int(tasks['Tipo de Registro'].eq('Visita de rotina').sum()),
+        'meetings': int(tasks['Tipo de Registro'].eq('Reunião/alinhamento').sum()),
+        'field_followups': int(tasks['Tipo de Registro'].eq('Acompanhamento de campo').sum()),
+        'emergencies': int(deliveries['Prioridade'].eq('Emergencial').sum()),
+        'late_commitments': len(overdue_commitments),
+        'unclassified_kinds': int(tasks['Tipo inferido'].sum()),
+    }
+
+
 def quality_issues(tasks):
     issues = []
     ids = tasks['ID da Tarefa'].tolist()
@@ -233,3 +309,4 @@ def new_task_id(ids):
 
 def pct(numerator, denominator):
     return 100 * numerator / denominator if denominator else 0
+

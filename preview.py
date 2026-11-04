@@ -6,7 +6,7 @@ from __future__ import annotations
 from io import BytesIO
 import math
 import pandas as pd
-from analytics import TASK_COLUMNS, DIARY_COLUMNS, VISIT_COLUMNS, format_date
+from analytics import TASK_COLUMNS, TASK_EXTRA_COLUMNS, DIARY_COLUMNS, VISIT_COLUMNS, format_date
 
 MAX_XLSX_SIZE = 8 * 1024 * 1024
 DATE_FIELDS = {'Data de Início', 'Data da Visita', 'Previsão de Conclusão', 'Data da Atualização'}
@@ -65,7 +65,9 @@ def parse_uploaded_workbook(file_bytes: bytes):
     tasks_name, tasks_sheet = _select_tab(tabs, TASK_COLUMNS)
     diary_name, diary_sheet = _select_tab(tabs, DIARY_COLUMNS)
     visits_name, visits_sheet = _select_tab(tabs, VISIT_COLUMNS, optional=True)
-    tasks = _records(tasks_sheet, TASK_COLUMNS)
+    # A cópia histórica só tinha 12 campos; os complementares são opcionais.
+    available = TASK_COLUMNS + [c for c in TASK_EXTRA_COLUMNS if c in tasks_sheet.columns]
+    tasks = _records(tasks_sheet, available)
     diary = _records(diary_sheet, DIARY_COLUMNS)
     visits = _records(visits_sheet, VISIT_COLUMNS) if visits_sheet is not None else []
     if not tasks:
@@ -80,3 +82,4 @@ def parse_uploaded_workbook(file_bytes: bytes):
         'source': f'Excel importado: {len(tasks)} atividades e {len(diary)} registros de diário',
         'tabs': {'activities': tasks_name, 'diary': diary_name, 'visits': visits_name},
     }
+

@@ -46,3 +46,25 @@ class SpreadsheetPreviewTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class ExtendedColumnsTest(unittest.TestCase):
+    def test_old_template_imports_and_new_optional_columns_are_preserved(self):
+        import io
+        import pandas as pd
+        from analytics import TASK_EXTRA_COLUMNS
+        from preview import parse_uploaded_workbook
+        tasks = pd.DataFrame([{c: '' for c in TASK_COLUMNS}])
+        tasks.loc[0,'ID da Tarefa']='ACT-777'
+        tasks.loc[0,'Descrição']='Manutenção preventiva'
+        tasks['Tipo de Registro']='Acompanhamento de campo'
+        tasks['Condição do Prazo']='Dependente de terceiros'
+        tasks['Motivo de Espera']='Aguardando fornecedor'
+        diary = pd.DataFrame(columns=DIARY_COLUMNS)
+        buff=io.BytesIO()
+        with pd.ExcelWriter(buff,engine='openpyxl') as x:
+            tasks.to_excel(x,sheet_name='Tarefas',index=False)
+            diary.to_excel(x,sheet_name='Diario',index=False)
+        p=parse_uploaded_workbook(buff.getvalue())
+        for k in TASK_EXTRA_COLUMNS:
+            self.assertEqual(p['tasks'][0][k],tasks.loc[0,k])
+

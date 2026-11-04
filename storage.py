@@ -6,7 +6,7 @@ import io
 from pathlib import Path
 import gspread
 import streamlit as st
-from analytics import TASK_COLUMNS, DIARY_COLUMNS, VISIT_COLUMNS, new_task_id, today_brazil, task_frame, visits_from_tasks
+from analytics import TASK_COLUMNS, TASK_EXTRA_COLUMNS, ALL_TASK_COLUMNS, DIARY_COLUMNS, VISIT_COLUMNS, new_task_id, today_brazil, task_frame, visits_from_tasks
 from security import safe_user_entry
 
 DEFAULT_SHEET_ID = '1LgXQeTJ4FK1h8VLGRWijU3oGaE_FNg5gBTuB6XhEiKI'
@@ -38,12 +38,12 @@ def connect():
     return gc.open_by_key(str(secret('SHEET_ID', DEFAULT_SHEET_ID)))
 
 
-def read_records(ws, columns):
+def read_records(ws, columns, required=None):
     values = ws.get_all_values(value_render_option='FORMATTED_VALUE')
     if not values:
         return []
     headers = [str(h).strip() for h in values[0]]
-    absent = [c for c in columns if c not in headers]
+    absent = [c for c in (required if required is not None else columns) if c not in headers]
     if absent:
         raise ValueError(f'A aba {ws.title} não possui as colunas: {", ".join(absent)}')
     output = []
@@ -51,7 +51,7 @@ def read_records(ws, columns):
         if not any(str(v).strip() for v in line):
             continue
         full = line + [''] * max(0, len(headers) - len(line))
-        obj = {col: full[headers.index(col)] for col in columns}
+        obj = {col: full[headers.index(col)] if col in headers else '' for col in columns}
         obj['__sheet_row'] = row_num
         output.append(obj)
     return output
@@ -88,7 +88,7 @@ def _demo_data():
 
 def load_live():
     book = connect()
-    tasks = read_records(book.get_worksheet_by_id(TASKS_GID), TASK_COLUMNS)
+    tasks = read_records(book.get_worksheet_by_id(TASKS_GID), ALL_TASK_COLUMNS, required=TASK_COLUMNS)
     diary = read_records(book.get_worksheet_by_id(DIARY_GID), DIARY_COLUMNS)
     try:
         visit_ws = book.worksheet(VISIT_TAB)
@@ -132,10 +132,23 @@ def _find_row(ws, task_id, columns=TASK_COLUMNS):
     return found[0]
 
 
+def ensure_task_headers(ws):
+    """Acrescenta campos na primeira linha SEM substituir as 12 colunas antigas."""
+    headers = [str(x).strip() for x in ws.row_values(1)]
+    missing = [c for c in TASK_EXTRA_COLUMNS if c not in headers]
+    if missing:
+        ws.update(range_name=f'{gspread.utils.rowcol_to_a1(1,len(headers)+1)}', values=[missing], value_input_option='RAW')
+    return [str(x).strip() for x in ws.row_values(1)]
+
+
 def _write_values(ws, row_num, old, new, columns):
     """Escreve somente células alteradas, sem regravar as demais colunas."""
     changes = []
-    for index, col in enumerate(columns, start=1):
+    headers = [str(x).strip() for x in ws.row_values(1)]
+    for col in columns:
+        if col not in headers:
+            continue
+        index = headers.index(col) + 1
         before = str(old.get(col, '')).strip()
         after = str(new.get(col, '')).strip()
         if before != after:
@@ -151,14 +164,15 @@ def create_task(values):
     if demo_mode():
         dataset = _demo_data()
         task_id = new_task_id([r['ID da Tarefa'] for r in dataset['tasks']])
-        dataset['tasks'].append({c: safe_user_entry(task_id if c == 'ID da Tarefa' else values.get(c, '')) for c in TASK_COLUMNS})
+        dataset['tasks'].append({c: safe_user_entry(task_id if c == 'ID da Tarefa' else values.get(c, '')) for c in ALL_TASK_COLUMNS})
         return task_id
     ws = _sheet(TASKS_GID)
-    recs = read_records(ws, TASK_COLUMNS)
+    headers = ensure_task_headers(ws)
+    recs = read_records(ws, ALL_TASK_COLUMNS, required=TASK_COLUMNS)
     task_id = new_task_id([r['ID da Tarefa'] for r in recs])
     data = dict(values, **{'ID da Tarefa': task_id})
-    row = [safe_user_entry(data.get(c, '')) for c in TASK_COLUMNS]
-    ws.append_row(row, value_input_option='USER_ENTERED', table_range='A:L')
+    row = [safe_user_entry(data.get(c, '')) if c in ALL_TASK_COLUMNS else '' for c in headers]
+    ws.append_row(row, value_input_option='USER_ENTERED')
     clear_data_cache()
     return task_id
 
@@ -173,18 +187,19 @@ def update_task(task_id, previous, values):
         old = rows[0]
         if any(str(old.get(c, '')).strip() != str(previous.get(c, '')).strip() for c in TASK_COLUMNS):
             raise ValueError('Os dados mudaram nesta sessão. Atualize antes de editar.')
-        old.update({c: safe_user_entry(values.get(c, '')) for c in TASK_COLUMNS})
+        old.update({c: safe_user_entry(values.get(c, '')) for c in ALL_TASK_COLUMNS})
         return 1
     ws = _sheet(TASKS_GID)
-    live = _find_row(ws, task_id)
+    ensure_task_headers(ws)
+    live = _find_row(ws, task_id, ALL_TASK_COLUMNS)
     if any(str(live[c]).strip() != str(previous.get(c, '')).strip() for c in TASK_COLUMNS):
         raise ValueError('A atividade mudou na planilha desde sua abertura. Recarregue antes de editar.')
-    changes = _write_values(ws, live['__sheet_row'], live, values, TASK_COLUMNS)
+    changes = _write_values(ws, live['__sheet_row'], live, values, ALL_TASK_COLUMNS)
     clear_data_cache()
     return changes
 
 
-def add_diary_and_update(row_values, update_current=False):
+def add_diary_and_update(row_values, update_current=False, waiting_reason=None):
     require_write()
     task_id = str(row_values['ID da Tarefa'])
     if demo_mode():
@@ -199,10 +214,14 @@ def add_diary_and_update(row_values, update_current=False):
         if update_current:
             matched[0]['Fase'] = record['Fase Atualizada']
             matched[0]['Status'] = record['Status Atualizado']
+            if waiting_reason is not None:
+                matched[0]['Motivo de Espera'] = safe_user_entry(waiting_reason)
         return
 
     ws_tasks = _sheet(TASKS_GID)
-    live_task = _find_row(ws_tasks, task_id)
+    if update_current and waiting_reason is not None:
+        ensure_task_headers(ws_tasks)
+    live_task = _find_row(ws_tasks, task_id, ALL_TASK_COLUMNS if waiting_reason is not None and update_current else TASK_COLUMNS)
     ws_diary = _sheet(DIARY_GID)
     existing = read_records(ws_diary, DIARY_COLUMNS)
     for r in existing:
@@ -216,7 +235,9 @@ def add_diary_and_update(row_values, update_current=False):
         new = dict(live_task)
         new['Fase'] = row_values['Fase Atualizada']
         new['Status'] = row_values['Status Atualizado']
-        _write_values(ws_tasks, live_task['__sheet_row'], live_task, new, TASK_COLUMNS)
+        if waiting_reason is not None:
+            new['Motivo de Espera'] = safe_user_entry(waiting_reason)
+        _write_values(ws_tasks, live_task['__sheet_row'], live_task, new, ALL_TASK_COLUMNS if waiting_reason is not None else TASK_COLUMNS)
     clear_data_cache()
 
 
@@ -303,3 +324,4 @@ def add_visit(data):
     ws.append_row(row, value_input_option='USER_ENTERED', table_range='A:I')
     clear_data_cache()
     return visit_id
+
