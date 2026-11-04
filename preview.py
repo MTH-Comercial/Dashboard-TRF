@@ -83,3 +83,4 @@ def parse_uploaded_workbook(file_bytes: bytes):
         'source': f'Excel importado: {len(tasks)} atividades e {len(diary)} registros de diário',
         'tabs': {'activities': tasks_name, 'diary': diary_name, 'visits': visits_name},
     }
+
