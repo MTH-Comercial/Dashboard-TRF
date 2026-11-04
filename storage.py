@@ -6,13 +6,15 @@ import io
 from pathlib import Path
 import gspread
 import streamlit as st
-from analytics import TASK_COLUMNS, TASK_EXTRA_COLUMNS, ALL_TASK_COLUMNS, DIARY_COLUMNS, VISIT_COLUMNS, new_task_id, today_brazil, task_frame, visits_from_tasks
+from analytics import TASK_COLUMNS, TASK_EXTRA_COLUMNS, ALL_TASK_COLUMNS, DIARY_COLUMNS, VISIT_COLUMNS, ALL_VISIT_COLUMNS, VISIT_EXTRA_COLUMNS, visit_purpose, new_task_id, today_brazil, task_frame, visits_from_tasks
 from security import safe_user_entry
 
 DEFAULT_SHEET_ID = '1LgXQeTJ4FK1h8VLGRWijU3oGaE_FNg5gBTuB6XhEiKI'
 TASKS_GID = 1562629984
 DIARY_GID = 997870532
 VISIT_TAB = 'Visitas_Contrato'
+TASKS_TAB = 'Atividades'
+DIARY_TAB = 'Atualizacoes'
 
 
 def secret(name, default=None):
@@ -86,15 +88,23 @@ def _demo_data():
     return load_demo()
 
 
+def get_tab(book, preferred_title, legacy_gid):
+    """A nova base usa nomes estáveis; a base antiga permanece compatível."""
+    try:
+        return book.worksheet(preferred_title)
+    except gspread.WorksheetNotFound:
+        return book.get_worksheet_by_id(legacy_gid)
+
+
 def load_live():
     book = connect()
-    tasks = read_records(book.get_worksheet_by_id(TASKS_GID), ALL_TASK_COLUMNS, required=TASK_COLUMNS)
-    diary = read_records(book.get_worksheet_by_id(DIARY_GID), DIARY_COLUMNS)
+    tasks = read_records(get_tab(book,TASKS_TAB,TASKS_GID), ALL_TASK_COLUMNS, required=TASK_COLUMNS)
+    diary = read_records(get_tab(book,DIARY_TAB,DIARY_GID), DIARY_COLUMNS)
     try:
         visit_ws = book.worksheet(VISIT_TAB)
     except gspread.WorksheetNotFound:
         visit_ws = None
-    visits = read_records(visit_ws, VISIT_COLUMNS) if visit_ws else []
+    visits = read_records(visit_ws, ALL_VISIT_COLUMNS, required=VISIT_COLUMNS) if visit_ws else []
     return {'tasks': tasks, 'diary': diary, 'visits': visits,
             'visit_mode': 'registro' if visit_ws is not None else 'legado', 'demo': False}
 
@@ -121,7 +131,20 @@ def require_write():
 
 
 def _sheet(gid):
-    return connect().get_worksheet_by_id(gid)
+    book=connect()
+    if gid==TASKS_GID:
+        return get_tab(book,TASKS_TAB,TASKS_GID)
+    if gid==DIARY_GID:
+        return get_tab(book,DIARY_TAB,DIARY_GID)
+    return book.get_worksheet_by_id(gid)
+
+
+def ensure_visit_headers(ws):
+    headers=[str(x).strip() for x in ws.row_values(1)]
+    missing=[c for c in VISIT_EXTRA_COLUMNS if c not in headers]
+    if missing:
+        ws.update(range_name=gspread.utils.rowcol_to_a1(1,len(headers)+1), values=[missing], value_input_option='RAW')
+    return [str(x).strip() for x in ws.row_values(1)]
 
 
 def _find_row(ws, task_id, columns=TASK_COLUMNS):
@@ -256,6 +279,7 @@ def initialize_visits_from_tasks(tasks):
             'Resumo': 'Visita migrada das atividades (conferir)',
             'Observações': 'Migração temporária: validar ocorrência presencial.',
             'Responsável': '', 'Origem': 'Migração de tarefas (a validar)',
+            'Finalidade': r.get('Finalidade','Outro'), 'Validação':'A validar',
         } for i, (_, r) in enumerate(imported.sort_values('Data').iterrows(), start=1)]
         dataset['visit_mode'] = 'registro'
         return len(dataset['visits'])
@@ -269,18 +293,18 @@ def initialize_visits_from_tasks(tasks):
     from datetime import date
     df_tasks = task_frame(tasks)
     imported = visits_from_tasks(df_tasks, date(1900,1,1), date(2100,1,1), today_brazil())
-    ws = book.add_worksheet(title=VISIT_TAB, rows=max(1000, len(imported)+30), cols=len(VISIT_COLUMNS))
-    ws.append_row(VISIT_COLUMNS, value_input_option='RAW')
+    ws = book.add_worksheet(title=VISIT_TAB, rows=max(1000, len(imported)+30), cols=len(ALL_VISIT_COLUMNS))
+    ws.append_row(ALL_VISIT_COLUMNS, value_input_option='RAW')
     rows = []
     for idx, (_, r) in enumerate(imported.sort_values('Data').iterrows(), start=1):
         rows.append([
             f'VIS-{idx:04d}', r['Data'].strftime('%d/%m/%Y'), r['Base'], 'Presencial',
             '', 'Visita migrada da planilha de atividades',
             'Registro histórico inferido da data da visita de uma atividade. Validar antes da auditoria.',
-            '', 'Migração de tarefas (a validar)',
+            '', 'Migração de tarefas (a validar)',r.get('Finalidade','Outro'),'A validar',
         ])
     if rows:
-        ws.append_rows(rows, value_input_option='USER_ENTERED', table_range='A:I')
+        ws.append_rows(rows, value_input_option='USER_ENTERED', table_range='A:K')
     ws.freeze(rows=1)
     clear_data_cache()
     return len(rows)
@@ -301,14 +325,15 @@ def add_visit(data):
         ids = [int(r['ID da Visita'].split('-')[-1]) for r in records
                if r['ID da Visita'].startswith('VIS-') and r['ID da Visita'].split('-')[-1].isdigit()]
         visit_id = f'VIS-{max(ids, default=0)+1:04d}'
-        records.append({c: safe_user_entry(visit_id if c == 'ID da Visita' else data.get(c, '')) for c in VISIT_COLUMNS})
+        records.append({c: safe_user_entry(visit_id if c == 'ID da Visita' else data.get(c, '')) for c in ALL_VISIT_COLUMNS})
         return visit_id
     book = connect()
     try:
         ws = book.worksheet(VISIT_TAB)
     except gspread.WorksheetNotFound:
         raise ValueError('Inicialize a aba Visitas_Contrato primeiro.')
-    records = read_records(ws, VISIT_COLUMNS)
+    ensure_visit_headers(ws)
+    records = read_records(ws, ALL_VISIT_COLUMNS, required=VISIT_COLUMNS)
     values = list(records)
     if any(
         r['Data da Visita'] == data['Data da Visita'] and
@@ -320,8 +345,9 @@ def add_visit(data):
            if r['ID da Visita'].startswith('VIS-') and r['ID da Visita'].split('-')[-1].isdigit()]
     visit_id = f'VIS-{max(ids, default=0)+1:04d}'
     data = dict(data, **{'ID da Visita': visit_id})
-    row = [safe_user_entry(data.get(col, '')) for col in VISIT_COLUMNS]
-    ws.append_row(row, value_input_option='USER_ENTERED', table_range='A:I')
+    headers=ensure_visit_headers(ws)
+    row=[safe_user_entry(data.get(col,'')) for col in headers]
+    ws.append_row(row, value_input_option='USER_ENTERED', table_range='A:K')
     clear_data_cache()
     return visit_id
 
