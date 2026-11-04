@@ -12,9 +12,9 @@ import streamlit as st
 
 from analytics import (
     BASES, CATEGORIES, PHASES, PRIORITIES, STATUSES, CLOSED,
-    ALL_TASK_COLUMNS, TASK_EXTRA_COLUMNS, KIND_OPTIONS, WAITING_STATUSES, DEADLINE_KINDS,
+    ALL_TASK_COLUMNS, TASK_EXTRA_COLUMNS, KIND_OPTIONS, ACT_KIND_OPTIONS, WAITING_STATUSES, DEADLINE_KINDS,
     display_status, effective_closed, ALL_VISIT_COLUMNS, VISIT_PURPOSES,
-    delivery_frame, delivery_overview, is_radar,
+    delivery_frame, delivery_overview, is_radar, activity_only_frame,
     TASK_COLUMNS, DIARY_COLUMNS, VISIT_COLUMNS, ALL_VISIT_COLUMNS,
     contract_metrics, contract_window, diary_frame, format_date,
     location_group, pct, quality_issues, task_frame, task_metrics,
@@ -207,7 +207,8 @@ if st.session_state.pop('save_success', False):
 
 try:
     raw = load_all()
-    tasks = task_frame(raw['tasks'])
+    all_task_records = task_frame(raw['tasks'])
+    tasks = activity_only_frame(all_task_records)
     diary = diary_frame(raw['diary'])
     visits = visit_frame(raw['visits'])
 except Exception as exc:
@@ -230,7 +231,7 @@ except ValueError:
 if raw['visit_mode'] == 'registro':
     contract_visits = visits_from_register(visits, contract_start, contract_end, today)
 else:
-    contract_visits = visits_from_tasks(tasks, contract_start, contract_end, today)
+    contract_visits = visits_from_tasks(all_task_records, contract_start, contract_end, today)
 contract = contract_metrics(contract_visits)
 
 with st.sidebar:
@@ -450,16 +451,16 @@ def render_executive():
         opened=delivery_frame(filtered)
         opened=opened[~opened['Status'].isin(CLOSED)]
         compact_table(opened,key='prioridades')
-    with st.expander('Detalhamento: visitas de rotina, reuniões, emergências e composição do trabalho', expanded=False):
+    with st.expander('Detalhamento: finalidades das visitas VIS e outras ações', expanded=False):
         subcols=st.columns(4)
         for col,(label,value,note) in zip(subcols,[
-            ('Visitas de rotina',summary['routine_visits'],'registros de rotina (não total de visitas)'),
+            ('Visitas de rotina',int(contract_visits['Finalidade'].eq('Rotina').sum()),'VIS classificados como rotina'),
             ('Reuniões',summary['meetings'],'alinhamentos registrados'),
             ('Emergências técnicas',summary['emergencies'],'prioridade emergencial'),
-            ('Acompanhamentos',summary['field_followups'],'visitas com objetivo técnico'),
+            ('Acompanhamentos',int(contract_visits['Finalidade'].isin(['Acompanhamento técnico','Levantamento/projeto']).sum()),'VIS técnicos e levantamentos'),
         ]):
             with col: kpi_card(label,value,note)
-        st.caption('**Atenção:** o número de visitas contratuais no topo inclui toda ida presencial registrada, independentemente da finalidade. Os tipos abaixo classificam os registros de trabalho, não os dias em campo.')
+        st.caption('As visitas têm numeração VIS e são contadas por base/data. ACT identifica apenas demandas, projetos, serviços e registros de reunião separados.')
         distribution=filtered['Tipo de Registro'].value_counts().reset_index()
         distribution.columns=['Tipo','Registros']
         if not distribution.empty:
@@ -470,16 +471,14 @@ def render_executive():
         st.caption(f'{summary["unclassified_kinds"]} tipos históricos foram sugeridos automaticamente e ainda podem ser revisados na edição dos registros.')
 
 def render_tasks():
-    header('Atividades, visitas e projetos',
-           'Trabalho técnico separado de visitas de rotina, reuniões e demandas futuras.',
+    header('Atividades e projetos | ACT',
+           'Serviços, projetos, reuniões independentes e demandas. As visitas ficam exclusivamente em VIS.',
            'ACOMPANHAMENTO TÉCNICO')
-    st.caption('**Cada linha representa um registro**, mas nem todo registro é uma entrega técnica. As visitas e reuniões ficam separadas para não inflar as métricas.')
-    categories=['Entregas técnicas','Visitas e acompanhamento','Reuniões e gestão','Radar','Todos os registros']
+    st.caption('Esta lista não contém visitas. Para consultar cada ida às bases, abra **Visitas e contrato** e selecione seu registro VIS.')
+    categories=['Entregas técnicas','Reuniões e gestão','Radar','Todos os registros ACT']
     scope=st.radio('Visualizar',categories,horizontal=True,key='task_scope')
     if scope=='Entregas técnicas':
         view=delivery_frame(filtered)
-    elif scope=='Visitas e acompanhamento':
-        view=filtered[filtered['Tipo de Registro'].isin(['Visita de rotina','Acompanhamento de campo'])]
     elif scope=='Reuniões e gestão':
         view=filtered[filtered['Tipo de Registro'].eq('Reunião/alinhamento')]
     elif scope=='Radar':
@@ -624,17 +623,14 @@ def _commit(callable_fn, *args, **kwargs):
 
 def admin_new_task():
     st.markdown('#### Nova atividade')
-    st.caption('Separe o tipo de registro da prioridade: uma visita de rotina não é entrega de engenharia. O ID continua automático.')
+    st.caption('Aqui você cadastra somente ACT (serviços, projetos, reuniões independentes e radar). Para registrar uma visita, selecione **Registrar visita** e receba um ID VIS.')
     with st.form('new_task',clear_on_submit=True):
-        a,b,c = st.columns(3)
-        start_date=a.date_input('Data de início',today,format='DD/MM/YYYY')
-        has_visit=b.checkbox('Esta atividade inclui visita de campo?',value=False)
-        visit_date=c.date_input('Data da visita (se aplicável)',today,format='DD/MM/YYYY',disabled=not has_visit)
+        start_date=st.date_input('Data de início da atividade',today,format='DD/MM/YYYY')
         a,b,c=st.columns(3)
         base=a.selectbox('Base',BASES)
         subarea=b.text_input('Subárea',value='Geral')
         category=c.selectbox('Categoria',CATEGORIES)
-        kind=st.selectbox('Tipo de registro',KIND_OPTIONS,index=0,help='Visita de rotina e reunião são acompanhamentos, mas não entram nas entregas técnicas.')
+        kind=st.selectbox('Tipo de registro ACT',ACT_KIND_OPTIONS,index=0,help='Presença em campo não é ACT; use o formulário VIS.')
         description=st.text_input('Descrição objetiva da atividade',max_chars=230)
         a,b,c=st.columns(3)
         phase=a.selectbox('Fase',PHASES,index=0)
@@ -652,9 +648,11 @@ def admin_new_task():
             st.error('Preencha a descrição.')
         elif not subarea.strip():
             st.error('Preencha a subárea.')
+        elif description.strip().casefold().startswith('visita'):
+            st.error('Registre a visita em Registrar visita (VIS), não como atividade ACT.')
         else:
             row={'Data de Início':format_date(start_date),
-                 'Data da Visita':format_date(visit_date) if has_visit else '',
+                 'Data da Visita':'',
                  'Base':base,'Subárea':subarea,'Categoria':category,
                  'Descrição':description,'Fase':phase,'Prioridade':priority,
                  'Previsão de Conclusão':format_date(deadline) if has_deadline else '',
@@ -685,7 +683,7 @@ def admin_edit_task():
         with c:
             category=choice('Categoria',CATEGORIES,row['Categoria'])
         with st.container():
-            kind=choice('Tipo de registro',KIND_OPTIONS,row['Tipo de Registro'])
+            kind=choice('Tipo de registro ACT',ACT_KIND_OPTIONS,row['Tipo de Registro'])
         description=st.text_input('Descrição',value=row['Descrição'])
         a,b,c=st.columns(3)
         with a: phase=choice('Fase',PHASES,row['Fase'])
@@ -744,8 +742,8 @@ def admin_diary():
 
 
 def admin_visit():
-    st.markdown('#### Registro geral das visitas')
-    st.caption('Cada ida à unidade tem um único registro contratual por base/data. No relato geral, descreva também orientações rápidas, consultorias, conversas e acompanhamentos que não precisam de uma atividade ACT própria.')
+    st.markdown('#### Registrar visita do contrato — ID VIS automático')
+    st.caption('Cada presença na base recebe VIS (nunca ACT). Registre no relato todas as orientações, consultorias, reuniões e serviços breves, mesmo sem abrir uma atividade técnica.')
     if raw['visit_mode'] == 'legado':
         st.warning('A base ainda não possui a aba Visitas_Contrato. Você pode migrar as datas e os relatos históricos das atividades antes de cadastrar visitas.')
         checked = st.checkbox('Entendo que as visitas importadas são estimadas e precisam ser validadas.')
@@ -852,15 +850,17 @@ def admin_quality():
 
 def admin_today():
     st.markdown('### 📝 Lançar o trabalho realizado no dia')
-    st.caption('Atualize o diário de uma atividade existente, ou cadastre uma entrega, visita de rotina, reunião ou demanda no radar. As visitas contratuais são contabilizadas no controle de visitas, em separado.')
+    st.caption('Atualize um serviço ACT, cadastre uma nova atividade ACT ou registre a presença/relato de campo como visita VIS. Não é necessário criar ACT para acompanhar uma visita.')
     action = st.radio('O trabalho é de uma atividade já cadastrada?',
-                      ['Sim — atualizar atividade existente', 'Não — cadastrar nova atividade'],
+                      ['Atualizar atividade ACT', 'Cadastrar nova atividade ACT', 'Registrar visita VIS'],
                       key='admin_today_kind')
     st.divider()
-    if action.startswith('Sim'):
+    if action == 'Atualizar atividade ACT':
         admin_diary()
-    else:
+    elif action == 'Cadastrar nova atividade ACT':
         admin_new_task()
+    else:
+        admin_visit()
 
 
 def render_admin():
