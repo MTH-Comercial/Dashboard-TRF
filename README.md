@@ -85,3 +85,24 @@ A aba privada `Visitas_Contrato` mantém **uma visita por base/data** para o con
 O formulário **Gestão administrativa → Registrar visita** oferece dois fluxos: **Registrar nova visita** e **Complementar / validar visita existente**. Editar o relato não altera a data/base nem acrescenta uma visita aos indicadores. Na aba **Visitas e contrato**, é possível selecionar uma visita para ler o texto do dia.
 
 Na migração automática de uma planilha antiga, o sistema dá preferência à anotação da atividade **Visita de rotina** da mesma base/data, copiando seu texto original, sem inventar acontecimentos nem apagar as anotações das tarefas. Registros já existentes em `Visitas_Contrato` não são reescritos automaticamente; a revisão deles é feita individualmente na área administrativa.
+
+## V6 — separar atividades ACT de visitas contratuais VIS
+
+**Regra de cadastro:** `ACT-xxx` identifica **serviço, projeto, demanda técnica ou reunião independente**. Toda visita às unidades, incluindo rotina, emergência, acompanhamento e levantamento, é cadastrada exclusivamente em `Gestão administrativa → Registrar visita` e recebe `VIS-xxxx`. O mesmo dia pode ter um VIS geral com vários serviços ACT vinculados, mas não se abre ACT apenas para relatar a presença em campo.
+
+A interface de `Lançar trabalho do dia` permite escolher entre atualizar ACT, criar ACT ou registrar VIS. O backend bloqueia a criação de ACT com tipo visita ou com descrição iniciada por “Visita”. Na seção `Atividades e projetos`, visitas históricas também são excluídas da lista de atividades; o detalhamento delas pertence à página `Visitas e contrato`.
+
+### Migração segura da base V5 para V6
+
+A planilha `Base_Transforma_V6_Atividades_e_Visitas_Separadas.xlsx` foi gerada **fora do GitHub público**, preservando os relatos históricos:
+
+- `Atividades`: 29 registros que não representam visitas, mantendo seus IDs ACT originais; a sequência terá lacunas, intencionalmente.
+- `Visitas_Contrato`: 22 visitas já registradas, cada qual com o identificador VIS; a mesma ida presencial não aparece novamente como ACT. Os campos `Resumo`, `Observações` e `Validação` permanecem.
+- `Atualizacoes`: 20 atualizações vinculadas a ACT ativos.
+- `Arquivo_ACT_Visitas`: 23 ACT históricos de visita, preservados para auditoria com referência ao VIS correspondente; o antigo ACT-043 não tem data de visita confirmada e está indicado como pendente, **sem criar um VIS fictício**.
+- `Arquivo_Atualizacoes_VIS`: 1 atualização histórica originalmente associada à visita ACT-045. Seu conteúdo foi incorporado ao relato geral VIS correspondente e preservado integralmente no arquivo de auditoria.
+- `Instrucoes` e `Configuracao`: regras de uso e conferência.
+
+**Não subir o arquivo de cliente no GitHub público.** Faça backup, importe a V6 no ambiente demonstrativo e confira os registros. Somente após aprovação, crie uma base **privada** em Google Sheets e direcione `SHEET_ID` nas Secrets do Streamlit para esse novo arquivo. Os registros de visita `A validar` devem ser revisados documentalmente antes do uso contratual.
+
+Compatibilidade: o importador agora dá preferência às abas oficiais `Atividades`, `Atualizacoes` e `Visitas_Contrato`, ignorando arquivos históricos como fontes para os indicadores. O repositório e a hospedagem de produção original do cliente continuam intocados durante o teste.
