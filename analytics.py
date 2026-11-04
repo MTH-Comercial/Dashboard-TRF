@@ -19,6 +19,9 @@ KIND_OPTIONS = [
     'Atividade técnica', 'Visita de rotina', 'Reunião/alinhamento',
     'Acompanhamento de campo', 'Demanda no radar',
 ]
+# ACT nunca representa uma visita: toda presença contratual recebe VIS.
+ACT_KIND_OPTIONS = ['Atividade técnica', 'Reunião/alinhamento', 'Demanda no radar']
+VISIT_TASK_KINDS = {'Visita de rotina', 'Acompanhamento de campo'}
 WAITING_STATUSES = {
     'Aguardando', 'Aguardando Cliente', 'Aguardando Aprovação',
     'Aguardando Terceiros', 'Aguardando Terceiro/Compras',
@@ -279,9 +282,23 @@ def is_delivery(row):
     return row.get('Tipo de Registro', '') == 'Atividade técnica'
 
 
+def is_visit_record(row):
+    """Visitas legadas, inclusive registros antigos tipados como 'Atividade técnica'."""
+    kind = str(row.get('Tipo de Registro', '')).strip()
+    description = str(row.get('Descrição', '')).strip().casefold()
+    return kind in VISIT_TASK_KINDS or description.startswith('visita')
+
+
+def activity_only_frame(tasks):
+    """ACT só inclui projetos, serviços, reuniões e radar; visitas vão para VIS."""
+    if tasks.empty:
+        return tasks.copy()
+    return tasks[~tasks.apply(is_visit_record, axis=1)].copy()
+
+
 def delivery_frame(tasks):
     """Somente entregas de engenharia contam como atividades técnicas."""
-    return tasks[tasks['Tipo de Registro'].eq('Atividade técnica')].copy()
+    return activity_only_frame(tasks)[activity_only_frame(tasks)['Tipo de Registro'].eq('Atividade técnica')].copy()
 
 
 def is_radar(row):
