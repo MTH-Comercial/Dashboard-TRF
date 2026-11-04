@@ -244,8 +244,8 @@ def visits_from_register(visits, start, end, today):
         key = (str(base).strip().casefold(), dt)
         if key not in seen:
             seen.add(key)
-            data.append({'Data': dt, 'Base': base, 'Grupo': group, 'Origem': row.get('Origem',''), 'Finalidade': row.get('Finalidade','Não informada') or 'Não informada'})
-    return pd.DataFrame(data, columns=['Data', 'Base', 'Grupo', 'Origem', 'Finalidade'])
+            data.append({'ID da Visita': row.get('ID da Visita',''), 'Data': dt, 'Base': base, 'Grupo': group, 'Origem': row.get('Origem',''), 'Finalidade': row.get('Finalidade','Não informada') or 'Não informada'})
+    return pd.DataFrame(data, columns=['ID da Visita', 'Data', 'Base', 'Grupo', 'Origem', 'Finalidade'])
 
 
 def contract_metrics(visits_df):
@@ -298,7 +298,8 @@ def activity_only_frame(tasks):
 
 def delivery_frame(tasks):
     """Somente entregas de engenharia contam como atividades técnicas."""
-    return activity_only_frame(tasks)[activity_only_frame(tasks)['Tipo de Registro'].eq('Atividade técnica')].copy()
+    actual = activity_only_frame(tasks)
+    return actual[actual['Tipo de Registro'].eq('Atividade técnica')].copy()
 
 
 def is_radar(row):
