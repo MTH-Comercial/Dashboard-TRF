@@ -33,7 +33,7 @@ class RulesTest(unittest.TestCase):
         k = task_metrics(self.tasks,date(2026,11,3))
         self.assertEqual(k['total'],3)
         self.assertEqual(k['overdue'],1)
-        self.assertEqual(len(quality_issues(self.tasks)),1)
+        self.assertEqual(len(quality_issues(self.tasks)),3)  # três descrições ausentes, não fases históricas
 
     def test_id_and_cycle(self):
         self.assertEqual(new_task_id(['ACT-001','ACT-019']), 'ACT-020')
