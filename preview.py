@@ -12,17 +12,22 @@ MAX_XLSX_SIZE = 8 * 1024 * 1024
 DATE_FIELDS = {'Data de Início', 'Data da Visita', 'Previsão de Conclusão', 'Data da Atualização'}
 
 
-def _select_tab(tabs: dict, required: list[str], *, optional: bool = False):
+def _select_tab(tabs: dict, required: list[str], *, optional: bool = False, preferred: str | None = None):
+    """Prefere a aba oficial; arquivos migrados podem conter arquivos históricos."""
     matches = []
     for tab_name, sheet in tabs.items():
         if set(required).issubset({str(x).strip() for x in sheet.columns}):
             matches.append((tab_name, sheet))
+    if preferred:
+        selected = [item for item in matches if item[0].casefold() == preferred.casefold()]
+        if len(selected) == 1:
+            return selected[0]
     if not matches:
         if optional:
             return None, None
         raise ValueError(f'Não encontrei uma aba com os campos obrigatórios: {", ".join(required[:3])}...')
     if len(matches) != 1:
-        raise ValueError('Mais de uma aba contém os mesmos campos necessários; confira o arquivo antes de carregar.')
+        raise ValueError('Mais de uma aba contém os mesmos campos. Use os nomes Atividades, Atualizacoes e Visitas_Contrato.')
     return matches[0]
 
 
@@ -62,9 +67,9 @@ def parse_uploaded_workbook(file_bytes: bytes):
         tabs = pd.read_excel(BytesIO(file_bytes), sheet_name=None, dtype=object, engine='openpyxl')
     except Exception as exc:
         raise ValueError('Não foi possível ler o Excel. Baixe novamente em formato .xlsx.') from exc
-    tasks_name, tasks_sheet = _select_tab(tabs, TASK_COLUMNS)
-    diary_name, diary_sheet = _select_tab(tabs, DIARY_COLUMNS)
-    visits_name, visits_sheet = _select_tab(tabs, VISIT_COLUMNS, optional=True)
+    tasks_name, tasks_sheet = _select_tab(tabs, TASK_COLUMNS, preferred='Atividades')
+    diary_name, diary_sheet = _select_tab(tabs, DIARY_COLUMNS, preferred='Atualizacoes')
+    visits_name, visits_sheet = _select_tab(tabs, VISIT_COLUMNS, optional=True, preferred='Visitas_Contrato')
     # A cópia histórica só tinha 12 campos; os complementares são opcionais.
     available = TASK_COLUMNS + [c for c in TASK_EXTRA_COLUMNS if c in tasks_sheet.columns]
     tasks = _records(tasks_sheet, available)
