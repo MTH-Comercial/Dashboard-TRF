@@ -37,12 +37,15 @@ VISIT_COLUMNS = [
     'ID da Visita', 'Data da Visita', 'Base', 'Tipo', 'ID da Tarefa vinculada',
     'Resumo', 'Observações', 'Responsável', 'Origem',
 ]
+VISIT_EXTRA_COLUMNS = ['Finalidade', 'Validação']
+ALL_VISIT_COLUMNS = VISIT_COLUMNS + VISIT_EXTRA_COLUMNS
+VISIT_PURPOSES = ['Rotina', 'Atendimento emergencial', 'Acompanhamento técnico', 'Reunião/alinhamento', 'Levantamento/projeto', 'Outro']
 BASES = ['Macaé/RJ', 'Porto do Açu - São João da Barra/RJ',
          'Gradim - São Gonçalo/RJ', 'A definir']
 STATUSES = [
     'Não Iniciado', 'Agendado', 'Em Andamento', 'Pausado',
     'Aguardando', 'Aguardando Cliente', 'Aguardando Aprovação', 'Aguardando Materiais',
-    'Aguardando Terceiros', 'Aguardando Terceiro/Compras', 'Em Validação', 'Bloqueado', 'Resolvido',
+    'Aguardando Terceiros', 'Aguardando Terceiro/Compras', 'Em Validação', 'Bloqueado', 'Resolvido', 'Realizado', 'Concluído',
 ]
 PHASES = [
     'Não Iniciado', 'Levantamento em Campo', 'Engenharia de Escritório',
@@ -54,7 +57,7 @@ CATEGORIES = [
     'Manutenção Corretiva/Emergencial', 'Projetos e Documentação',
     'Acompanhamento Técnico (Obras/Manutenção)',
 ]
-CLOSED = {'Resolvido'}
+CLOSED = {'Resolvido', 'Realizado', 'Concluído', 'Feito', 'Realizada'}
 
 
 def today_brazil():
@@ -113,11 +116,39 @@ def infer_record_kind(description, priority='', status=''):
     text = re.sub(r'\s+', ' ', str(description).casefold().strip())
     if re.search(r'visita\s+pr[eé][\s-]*marcada|visita\s+de\s+rotina', text):
         return 'Visita de rotina'
-    if re.match(r'^(reuni[aã]o|alinhamento\b)', text):
+    if re.match(r'^(reuni[aã]o|alinhamento\b|visita\s+e\s+reuni[aã]o)', text):
         return 'Reunião/alinhamento'
+    if re.match(r'^(visita\s+de\s+emerg[eê]ncia\s+para\s+acompanhamento|visita\s+de\s+emergencia\s+para\s+acompanhamento|visita$)', text):
+        return 'Acompanhamento de campo'
     if priority == 'Planejamento (Futuro)' and status not in CLOSED:
         return 'Demanda no radar'
     return 'Atividade técnica'
+
+
+def effective_closed(kind, status):
+    return status in CLOSED
+
+
+def display_status(kind, status):
+    """Rótulos mais naturais para visitas e reuniões sem alterar o histórico."""
+    if status == 'Resolvido' and kind in {'Visita de rotina','Acompanhamento de campo'}:
+        return 'Realizada'
+    if status == 'Resolvido' and kind == 'Reunião/alinhamento':
+        return 'Realizada'
+    return status
+
+
+def visit_purpose(row):
+    """Sugestão de finalidade por registro; não transforma demanda em visita."""
+    kind=str(row.get('Tipo de Registro',''))
+    description=str(row.get('Descrição','')).lower()
+    priority=str(row.get('Prioridade',''))
+    if 'reunião' in description or 'alinhamento' in description and kind=='Reunião/alinhamento': return 'Reunião/alinhamento'
+    if kind=='Visita de rotina': return 'Rotina'
+    if priority=='Emergencial': return 'Atendimento emergencial'
+    if kind=='Acompanhamento de campo': return 'Acompanhamento técnico'
+    if 'levantamento' in description or 'projeto' in description: return 'Levantamento/projeto'
+    return 'Outro'
 
 
 def task_frame(rows):
@@ -142,7 +173,7 @@ def diary_frame(rows):
 
 
 def visit_frame(rows):
-    df = frame(rows, VISIT_COLUMNS)
+    df = frame(rows, ALL_VISIT_COLUMNS)
     df = df[df['Data da Visita'].ne('')].copy()
     df['Data da Visita_dt'] = df['Data da Visita'].map(parse_date)
     return df
@@ -188,8 +219,8 @@ def visits_from_tasks(tasks, start, end, today):
         key = (str(base).strip().casefold(), dt)
         if key not in seen:
             seen.add(key)
-            data.append({'Data': dt, 'Base': base, 'Grupo': group, 'Origem': 'Tarefa'})
-    return pd.DataFrame(data, columns=['Data', 'Base', 'Grupo', 'Origem'])
+            data.append({'Data': dt, 'Base': base, 'Grupo': group, 'Origem': 'Estimativa a partir da atividade', 'Finalidade': visit_purpose(row)})
+    return pd.DataFrame(data, columns=['Data', 'Base', 'Grupo', 'Origem', 'Finalidade'])
 
 
 def visits_from_register(visits, start, end, today):
@@ -201,6 +232,8 @@ def visits_from_register(visits, start, end, today):
         base = row.get('Base', '')
         group = location_group(base)
         tipo = str(row.get('Tipo', '')).strip().casefold()
+        if str(row.get('Validação','')).strip().casefold() == 'descartada':
+            continue
         if dt is None or group == 'Não classificada' or tipo != 'presencial':
             continue
         if not (start <= dt <= min(end, today)):
@@ -208,8 +241,8 @@ def visits_from_register(visits, start, end, today):
         key = (str(base).strip().casefold(), dt)
         if key not in seen:
             seen.add(key)
-            data.append({'Data': dt, 'Base': base, 'Grupo': group, 'Origem': row.get('Origem','')})
-    return pd.DataFrame(data, columns=['Data', 'Base', 'Grupo', 'Origem'])
+            data.append({'Data': dt, 'Base': base, 'Grupo': group, 'Origem': row.get('Origem',''), 'Finalidade': row.get('Finalidade','Não informada') or 'Não informada'})
+    return pd.DataFrame(data, columns=['Data', 'Base', 'Grupo', 'Origem', 'Finalidade'])
 
 
 def contract_metrics(visits_df):
@@ -253,8 +286,7 @@ def delivery_frame(tasks):
 
 def is_radar(row):
     return (row.get('Status', '') not in CLOSED
-            and (row.get('Tipo de Registro', '') == 'Demanda no radar'
-                 or row.get('Prioridade', '') == 'Planejamento (Futuro)'))
+            and row.get('Tipo de Registro', '') == 'Demanda no radar')
 
 
 def delivery_overview(tasks, today=None):
@@ -282,20 +314,20 @@ def delivery_overview(tasks, today=None):
 
 
 def quality_issues(tasks):
-    issues = []
-    ids = tasks['ID da Tarefa'].tolist()
-    for value in set(ids):
-        if ids.count(value) > 1:
-            issues.append((value, 'ID duplicado', 'A planilha exige IDs únicos.'))
-    for _, row in tasks.iterrows():
-        task_id = row['ID da Tarefa']
-        if row['Status'] == 'Resolvido' and row['Fase'] != 'Concluído':
-            issues.append((task_id, 'Fase e status diferentes', 'Resolvido com fase ainda aberta; confirmar se é intencional.'))
-        elif row['Fase'] == 'Concluído' and row['Status'] != 'Resolvido':
-            issues.append((task_id, 'Fase e status diferentes', 'Fase Concluído com status não resolvido.'))
-        if row['Data de Início_dt'] is None:
-            issues.append((task_id, 'Data de início inválida', 'Conferir data na planilha.'))
-    return pd.DataFrame(issues, columns=['ID', 'Aviso', 'Ação sugerida'])
+    """Somente problemas reais de cadastro, nunca transições históricas de fase/status."""
+    issues=[]
+    ids=tasks['ID da Tarefa'].tolist()
+    for value in sorted(set(ids)):
+        if ids.count(value)>1:
+            issues.append((value,'ID duplicado','O ID deve ser único para o histórico e a edição.'))
+    for _,row in tasks.iterrows():
+        task_id=row['ID da Tarefa']
+        if not row['Descrição'].strip():
+            issues.append((task_id,'Descrição ausente','Identifique o serviço ou atendimento.'))
+        # Demanda no radar sem data é intencional e permitida.
+        if row['Data de Início'] and row['Data de Início_dt'] is None:
+            issues.append((task_id,'Data inválida','Confira a data de início.'))
+    return pd.DataFrame(issues,columns=['ID','Aviso','Ação sugerida'])
 
 
 def new_task_id(ids):
