@@ -15,7 +15,7 @@ from analytics import (
     ALL_TASK_COLUMNS, TASK_EXTRA_COLUMNS, KIND_OPTIONS, WAITING_STATUSES, DEADLINE_KINDS,
     display_status, effective_closed, ALL_VISIT_COLUMNS, VISIT_PURPOSES,
     delivery_frame, delivery_overview, is_radar,
-    TASK_COLUMNS, DIARY_COLUMNS, VISIT_COLUMNS,
+    TASK_COLUMNS, DIARY_COLUMNS, VISIT_COLUMNS, ALL_VISIT_COLUMNS,
     contract_metrics, contract_window, diary_frame, format_date,
     location_group, pct, quality_issues, task_frame, task_metrics,
     visit_frame, visits_from_register, visits_from_tasks, parse_date, today_brazil, sort_tasks_for_table,
@@ -24,7 +24,7 @@ from security import verify_password
 from preview import parse_uploaded_workbook
 from storage import (
     add_diary_and_update, add_visit, create_task, demo_mode, google_ready,
-    initialize_visits_from_tasks, load_all, secret, update_task,
+    initialize_visits_from_tasks, load_all, secret, update_task, update_visit,
     clear_data_cache, demo_replace_dataset,
 )
 
@@ -509,6 +509,24 @@ def render_visits():
         show['Data'] = show['Data'].map(lambda x:x.strftime('%d/%m/%Y'))
         st.dataframe(show.rename(columns={'Grupo':'Agrupamento contratual','Origem':'Fonte','Finalidade':'Objetivo da visita'}),
                      hide_index=True,use_container_width=True)
+    if not visits.empty:
+        st.subheader('Relato geral das visitas')
+        st.caption('O registro reúne o que aconteceu no dia em campo — inclusive orientações rápidas que não geraram uma atividade ACT.')
+        selected_visits = visits.copy().sort_values('Data da Visita_dt', ascending=False, na_position='last')
+        view_rows = {str(r['ID da Visita']):r.to_dict() for _,r in selected_visits.iterrows()}
+        chosen_visit = st.selectbox(
+            'Abra uma visita para ler o relato', list(view_rows),
+            format_func=lambda key: f"{format_date(view_rows[key].get('Data da Visita'))} · {view_rows[key].get('Base','')} · {view_rows[key].get('Resumo','')[:65]}",
+            key='visit_daily_notes')
+        visit_record = view_rows[chosen_visit]
+        with st.container(border=True):
+            st.markdown(f"**{escape(str(visit_record.get('Resumo','Visita')))}**")
+            st.caption(f"{format_date(visit_record.get('Data da Visita'))} · {visit_record.get('Base','')} · {visit_record.get('Finalidade','')} · {visit_record.get('Validação','')}")
+            st.markdown('**O que foi realizado durante a visita**')
+            st.write(visit_record.get('Observações') or 'Relato geral ainda não informado.')
+            if visit_record.get('ID da Tarefa vinculada'):
+                st.caption(f"Atividade relacionada: {visit_record['ID da Tarefa vinculada']}")
+
     st.subheader('Agenda de visitas vinculadas às atividades')
     future = tasks[tasks['Data da Visita_dt'].map(lambda d:d is not None and d > today)].copy()
     if future.empty:
@@ -726,32 +744,76 @@ def admin_diary():
 
 
 def admin_visit():
-    st.markdown('#### Registrar visita contratual')
-    st.caption('Registre uma única visita presencial por base e data, independentemente da finalidade. Várias atividades no mesmo dia não multiplicam visitas contratuais.')
-    if raw['visit_mode']=='legado':
-        st.warning('O arquivo ainda não possui a aba Visitas_Contrato. Você pode simular a migração do histórico antes de registrar novas visitas.')
-        st.markdown('**Criar controle de visitas e importar histórico**')
-        st.caption('Importa uma visita por base/data de todas as tarefas existentes (até hoje). Os registros históricos importados serão identificados como **a validar**.')
-        checked=st.checkbox('Entendo que a importação de visitas é estimada. Na demonstração, a criação não modifica a planilha original.' if demo_mode() else 'Tenho backup da planilha e autorizo criar a nova aba com o histórico deduplicado.')
-        if st.button('Simular importação de visitas' if demo_mode() else 'Criar aba e migrar visitas',disabled=not checked,type='primary'):
-            _commit(initialize_visits_from_tasks,raw['tasks'])
+    st.markdown('#### Registro geral das visitas')
+    st.caption('Cada ida à unidade tem um único registro contratual por base/data. No relato geral, descreva também orientações rápidas, consultorias, conversas e acompanhamentos que não precisam de uma atividade ACT própria.')
+    if raw['visit_mode'] == 'legado':
+        st.warning('A base ainda não possui a aba Visitas_Contrato. Você pode migrar as datas e os relatos históricos das atividades antes de cadastrar visitas.')
+        checked = st.checkbox('Entendo que as visitas importadas são estimadas e precisam ser validadas.')
+        if st.button('Simular migração de visitas e relatos' if demo_mode() else 'Criar aba e importar visitas e relatos',
+                     disabled=not checked, type='primary'):
+            _commit(initialize_visits_from_tasks, raw['tasks'])
         return
-    with st.form('add_visit_form',clear_on_submit=True):
-        a,b,c=st.columns(3)
-        dt=a.date_input('Data da visita',today,format='DD/MM/YYYY')
-        base=b.selectbox('Base visitada',BASES[:-1])
-        tipo=c.selectbox('Tipo de atendimento',['Presencial','Remoto'])
-        purpose=st.selectbox('Finalidade da visita', VISIT_PURPOSES, help='Uma visita pode ser de rotina, emergência, levantamento, reunião ou acompanhamento. Todas as presenciais validadas contam no contrato.')
-        related=st.selectbox('Atividade vinculada (opcional)',['Sem vínculo']+sorted(tasks['ID da Tarefa'].tolist()))
-        summary=st.text_input('Resumo do objetivo da visita')
-        observations=st.text_area('Observações e evidências',height=130)
-        responsible=st.text_input('Responsável',value='Mothé Engenharia')
-        submit=st.form_submit_button('Registrar visita',type='primary',use_container_width=True)
+
+    modes = ['Registrar nova visita']
+    if not visits.empty:
+        modes.append('Complementar / validar visita existente')
+    mode = st.radio('O que deseja fazer?', modes, horizontal=True, key='visit_action')
+
+    if mode == 'Complementar / validar visita existente':
+        ordered = visits.sort_values('Data da Visita_dt', ascending=False, na_position='last')
+        lookup = {str(row['ID da Visita']): row.to_dict() for _,row in ordered.iterrows()}
+        ids = list(lookup)
+        def name_of(visit_id):
+            rec = lookup[visit_id]
+            return f"{format_date(rec.get('Data da Visita'))} · {rec.get('Base','')} · {visit_id} · {rec.get('Resumo','')[:48]}"
+        chosen = st.selectbox('Selecione a visita já registrada', ids, format_func=name_of, key='visit_edit_id')
+        rec = lookup[chosen]
+        st.caption(f"Base: {rec.get('Base','')} · data: {format_date(rec.get('Data da Visita'))} · origem: {rec.get('Origem','')}")
+        with st.form(f'visit_edit_{chosen}'):
+            summary = st.text_input('Assunto principal da visita', value=str(rec.get('Resumo','')), max_chars=250)
+            observations = st.text_area(
+                'Relato geral do dia — atividades, orientações, consultorias rápidas e reuniões',
+                value=str(rec.get('Observações','')), height=260,
+                help='Registre o que ocorreu durante a presença na unidade, mesmo quando não foi aberta uma tarefa ACT.')
+            a,b = st.columns(2)
+            purpose = a.selectbox('Finalidade predominante', VISIT_PURPOSES,
+                                  index=VISIT_PURPOSES.index(rec.get('Finalidade')) if rec.get('Finalidade') in VISIT_PURPOSES else 0)
+            options = ['A validar','Confirmada','Descartada']
+            initial = rec.get('Validação', 'A validar')
+            validation = b.selectbox('Conferência da visita',options,index=options.index(initial) if initial in options else 0,
+                                     help='Confirme a ida somente após verificar o registro histórico.')
+            responsible = st.text_input('Responsável', value=str(rec.get('Responsável','')))
+            submit = st.form_submit_button('Salvar relato da visita', type='primary', use_container_width=True)
+        if submit:
+            if not summary.strip() or not observations.strip():
+                st.error('Informe o assunto e o relato geral antes de salvar.')
+            else:
+                previous={col:rec.get(col,'') for col in ALL_VISIT_COLUMNS}
+                changes={'Resumo':summary,'Observações':observations,'Finalidade':purpose,
+                         'Validação':validation,'Responsável':responsible}
+                _commit(update_visit,chosen,previous,changes)
+        return
+
+    with st.form('add_visit_form', clear_on_submit=True):
+        a,b,c = st.columns(3)
+        dt = a.date_input('Data da visita',today,format='DD/MM/YYYY')
+        base = b.selectbox('Base visitada',BASES[:-1])
+        tipo = c.selectbox('Tipo de atendimento',['Presencial','Remoto'])
+        purpose = st.selectbox('Finalidade predominante', VISIT_PURPOSES,
+                               help='Rotina, emergência, levantamento, reunião ou acompanhamento; a finalidade não altera a contagem contratual.')
+        related = st.selectbox('Atividade vinculada (opcional)', ['Sem vínculo']+sorted(tasks['ID da Tarefa'].tolist()))
+        summary = st.text_input('Assunto principal / objetivo da visita',max_chars=250)
+        observations = st.text_area(
+            'Relato geral do dia — o que foi feito, inclusive consultorias rápidas e orientações',
+            height=260, placeholder='Descreva de forma objetiva os serviços, conversas técnicas, reuniões, decisões e acompanhamentos realizados na visita...',
+            help='Não é necessário criar uma atividade ACT para cada orientação breve. Este relato pertence à visita.')
+        responsible = st.text_input('Responsável',value='Mothé Engenharia')
+        submit = st.form_submit_button('Registrar visita e relato geral',type='primary',use_container_width=True)
     if submit:
-        if not summary.strip():
-            st.error('O resumo é obrigatório.')
+        if not summary.strip() or not observations.strip():
+            st.error('Preencha o assunto principal e o relato geral da visita.')
         elif dt > today and tipo == 'Presencial':
-            st.error('Registre visitas futuras na agenda, mas contabilize somente as efetivamente realizadas.')
+            st.error('Registre visitas futuras na agenda; contabilize apenas as que já aconteceram.')
         else:
             record={'Data da Visita':format_date(dt),'Base':base,'Tipo':tipo,
                     'ID da Tarefa vinculada':'' if related=='Sem vínculo' else related,
