@@ -9,7 +9,7 @@ import streamlit as st
 from analytics import TASK_COLUMNS, TASK_EXTRA_COLUMNS, ALL_TASK_COLUMNS, DIARY_COLUMNS, VISIT_COLUMNS, ALL_VISIT_COLUMNS, VISIT_EXTRA_COLUMNS, visit_purpose, ACT_KIND_OPTIONS, VISIT_TASK_KINDS, new_task_id, today_brazil, task_frame, visits_from_tasks
 from security import safe_user_entry
 
-DEFAULT_SHEET_ID = '1LgXQeTJ4FK1h8VLGRWijU3oGaE_FNg5gBTuB6XhEiKI'
+DEFAULT_SHEET_ID = '1_KEm7fLJpglz89vG-67hXIKrWOVSpcEkUXNILbSF1QE'  # Base V6 privada, na pasta 04 Transforma (R.R)
 TASKS_GID = 1562629984
 DIARY_GID = 997870532
 VISIT_TAB = 'Visitas_Contrato'
@@ -36,8 +36,14 @@ def connect():
     creds = secret('gcp_service_account')
     if not creds:
         raise RuntimeError('Conexão Google Sheets não configurada nas Secrets.')
+    selected_sheet = str(secret('SHEET_ID', DEFAULT_SHEET_ID)).strip()
+    if selected_sheet != DEFAULT_SHEET_ID:
+        raise RuntimeError(
+            'A base configurada neste ambiente de teste não é a V6. '
+            'Atualize SHEET_ID em Streamlit Secrets antes de habilitar leitura/gravação.'
+        )
     gc = gspread.service_account_from_dict(dict(creds))
-    return gc.open_by_key(str(secret('SHEET_ID', DEFAULT_SHEET_ID)))
+    return gc.open_by_key(selected_sheet)
 
 
 def read_records(ws, columns, required=None):
