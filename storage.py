@@ -6,7 +6,7 @@ import io
 from pathlib import Path
 import gspread
 import streamlit as st
-from analytics import TASK_COLUMNS, TASK_EXTRA_COLUMNS, ALL_TASK_COLUMNS, DIARY_COLUMNS, VISIT_COLUMNS, ALL_VISIT_COLUMNS, VISIT_EXTRA_COLUMNS, visit_purpose, new_task_id, today_brazil, task_frame, visits_from_tasks
+from analytics import TASK_COLUMNS, TASK_EXTRA_COLUMNS, ALL_TASK_COLUMNS, DIARY_COLUMNS, VISIT_COLUMNS, ALL_VISIT_COLUMNS, VISIT_EXTRA_COLUMNS, visit_purpose, ACT_KIND_OPTIONS, VISIT_TASK_KINDS, new_task_id, today_brazil, task_frame, visits_from_tasks
 from security import safe_user_entry
 
 DEFAULT_SHEET_ID = '1LgXQeTJ4FK1h8VLGRWijU3oGaE_FNg5gBTuB6XhEiKI'
@@ -183,6 +183,11 @@ def _write_values(ws, row_num, old, new, columns):
 
 
 def create_task(values):
+    # Registros VIS são exclusivos da aba de visitas; impedir ACT duplicado.
+    kind = str(values.get('Tipo de Registro') or 'Atividade técnica').strip()
+    description = str(values.get('Descrição') or '').strip().casefold()
+    if kind not in ACT_KIND_OPTIONS or kind in VISIT_TASK_KINDS or description.startswith('visita'):
+        raise ValueError('Visitas devem ser registradas em Gestão administrativa → Registrar visita, com número VIS, nunca ACT.')
     require_write()
     if demo_mode():
         dataset = _demo_data()
@@ -201,6 +206,10 @@ def create_task(values):
 
 
 def update_task(task_id, previous, values):
+    kind = str(values.get('Tipo de Registro') or 'Atividade técnica').strip()
+    description = str(values.get('Descrição') or '').strip().casefold()
+    if kind not in ACT_KIND_OPTIONS or description.startswith('visita'):
+        raise ValueError('Este registro é uma visita: use o cadastro VIS e importe a base migrada.')
     require_write()
     if demo_mode():
         dataset = _demo_data()
