@@ -18,7 +18,7 @@ from analytics import (
     TASK_COLUMNS, DIARY_COLUMNS, VISIT_COLUMNS,
     contract_metrics, contract_window, diary_frame, format_date,
     location_group, pct, quality_issues, task_frame, task_metrics,
-    visit_frame, visits_from_register, visits_from_tasks, parse_date, today_brazil,
+    visit_frame, visits_from_register, visits_from_tasks, parse_date, today_brazil, sort_tasks_for_table,
 )
 from security import verify_password
 from preview import parse_uploaded_workbook
@@ -307,13 +307,10 @@ metrics = task_metrics(filtered, today)
 def task_table(data):
     columns = ['ID da Tarefa','Descrição','Tipo de Registro','Base','Status',
                'Prioridade','Data de Início','Previsão de Conclusão']
-    disp = data.copy()
-    if disp.empty:
+    if data.empty:
         st.info('Nenhum registro para os filtros atuais.')
         return
-    if 'Data de Início_dt' in disp.columns:
-        disp['Ordenação'] = pd.to_datetime(disp['Data de Início_dt'], errors='coerce')
-        disp = disp.sort_values('Ordenação', ascending=False, na_position='last')
+    disp = sort_tasks_for_table(data)
     for col in columns:
         if col not in disp.columns: disp[col] = ''
     disp['Status'] = disp.apply(lambda r: display_status(r['Tipo de Registro'],r['Status']),axis=1)
@@ -491,7 +488,7 @@ def render_tasks():
         view=filtered
     a,b,c=st.columns(3)
     a.metric('Registros na seleção',len(view))
-    b.metric('Resolvidos',int(view['Status'].isin(CLOSED).sum()))
+    b.metric('Concluídos / realizados',int(view['Status'].isin(CLOSED).sum()))
     c.metric('Ainda abertos',int((~view['Status'].isin(CLOSED)).sum()))
     task_table(view)
     st.subheader('Detalhes do registro')
