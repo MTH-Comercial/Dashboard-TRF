@@ -72,3 +72,16 @@ python -m compileall -q app.py analytics.py storage.py preview.py
 ```
 
 16 testes unitários passaram localmente. A escrita real depende de uma conta de serviço configurada em Secrets; o teste end-to-end de gravação no Google ainda é pendente.
+
+## Relato geral de cada visita (V5)
+
+A aba privada `Visitas_Contrato` mantém **uma visita por base/data** para o controle contratual, mas sua coluna **`Observações`** agora também é o **relato geral da visita**. Nela devem constar orientação rápida, consultoria informal, reunião e acompanhamento técnico feitos no dia, mesmo que nenhuma dessas ocorrências justifique abrir uma tarefa ACT.
+
+- **Atividade técnica:** representa a demanda/entrega com status e histórico próprios.
+- **Visita contratual:** registra a presença na unidade, independentemente da finalidade. Uma visita pode envolver várias atividades e orientações breves.
+- **Resumo:** assunto principal em uma linha; **Observações:** relato narrativo do dia, mais completo.
+- **Origem / Validação:** preservam a rastreabilidade das visitas migradas. `A validar` não equivale a visita confirmada documentalmente.
+
+O formulário **Gestão administrativa → Registrar visita** oferece dois fluxos: **Registrar nova visita** e **Complementar / validar visita existente**. Editar o relato não altera a data/base nem acrescenta uma visita aos indicadores. Na aba **Visitas e contrato**, é possível selecionar uma visita para ler o texto do dia.
+
+Na migração automática de uma planilha antiga, o sistema dá preferência à anotação da atividade **Visita de rotina** da mesma base/data, copiando seu texto original, sem inventar acontecimentos nem apagar as anotações das tarefas. Registros já existentes em `Visitas_Contrato` não são reescritos automaticamente; a revisão deles é feita individualmente na área administrativa.
