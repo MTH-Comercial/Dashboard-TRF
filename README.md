@@ -106,3 +106,24 @@ A planilha `Base_Transforma_V6_Atividades_e_Visitas_Separadas.xlsx` foi gerada *
 **Não subir o arquivo de cliente no GitHub público.** Faça backup, importe a V6 no ambiente demonstrativo e confira os registros. Somente após aprovação, crie uma base **privada** em Google Sheets e direcione `SHEET_ID` nas Secrets do Streamlit para esse novo arquivo. Os registros de visita `A validar` devem ser revisados documentalmente antes do uso contratual.
 
 Compatibilidade: o importador agora dá preferência às abas oficiais `Atividades`, `Atualizacoes` e `Visitas_Contrato`, ignorando arquivos históricos como fontes para os indicadores. O repositório e a hospedagem de produção original do cliente continuam intocados durante o teste.
+
+## Base oficial para TESTES — Google Sheets V6 (04/11/2026)
+
+A nova planilha está criada **na mesma pasta `04 Transforma (R.R)` da base antiga**, como Google Sheets nativo:
+
+- ID: `1_KEm7fLJpglz89vG-67hXIKrWOVSpcEkUXNILbSF1QE`
+- URL: https://docs.google.com/spreadsheets/d/1_KEm7fLJpglz89vG-67hXIKrWOVSpcEkUXNILbSF1QE/edit
+- Abas: `Atividades` (29 registros ACT), `Visitas_Contrato` (22 VIS), `Atualizacoes` (20 eventos), `Arquivo_ACT_Visitas` (23 registros), `Arquivo_Atualizacoes_VIS` (1 evento), `Instrucoes` e `Configuracao`.
+- Os valores foram conferidos após a criação da planilha nativa. A base anterior **não** foi substituída, e a V6 é privada.
+
+O código da **branch de teste** tem esse ID como `DEFAULT_SHEET_ID` e **recusa conectar-se a uma planilha diferente**, prevenindo edição acidental da base antiga. A branch `main` do cliente permanece intacta.
+
+### Falta autorizar o Streamlit de teste
+
+1. Na [aplicação de teste](https://dashboard-transforma-v2-teste.streamlit.app), abra **Manage app → Settings → Secrets**. Não publique credenciais no GitHub.
+2. Faça backup dos secrets atuais. Configure `SHEET_ID = "1_KEm7fLJpglz89vG-67hXIKrWOVSpcEkUXNILbSF1QE"` e `[gcp_service_account]` com credenciais próprias, **sem copiá-las para o código**.
+3. Compartilhe **somente a planilha V6** com o `client_email` da conta de serviço Google como **Editor**. Use o Drive para conceder o acesso. Não use a opção pública “Qualquer pessoa com o link”.
+4. Configure `ADMIN_PASSWORD_HASH` e `CLIENT_PASSWORD_HASH` com valores gerados por `gerar_senhas.py`. Enquanto `DEMO_MODE = true`, qualquer pessoa consegue usar a demonstração como administrador **sem gravação real**.
+5. **Somente depois** de configurar e conferir senhas e conta de serviço, altere `DEMO_MODE = false`. Reboot no Streamlit, faça login administrativo, confira 29 ACT, 22 VIS e 20 eventos e teste um lançamento de baixa criticidade.
+
+**Atenção:** alterar `DEFAULT_SHEET_ID` no GitHub não altera os `Secrets` de um aplicativo já implantado; o Streamlit pode continuar mostrando a demonstração até que a configuração acima seja concluída. A conexão Google não foi validada de ponta a ponta enquanto essas credenciais privadas não estiverem configuradas.
