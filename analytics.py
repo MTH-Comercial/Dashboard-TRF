@@ -330,6 +330,20 @@ def quality_issues(tasks):
     return pd.DataFrame(issues,columns=['ID','Aviso','Ação sugerida'])
 
 
+def sort_tasks_for_table(data):
+    """Ordenação segura para tabelas vazias ou sem coluna auxiliar de data."""
+    if data is None or data.empty:
+        return pd.DataFrame() if data is None else data.copy()
+    result = data.copy()
+    if 'Data de Início_dt' in result.columns:
+        result['_ordem_'] = pd.to_datetime(result['Data de Início_dt'], errors='coerce')
+    elif 'Data de Início' in result.columns:
+        result['_ordem_'] = pd.to_datetime(result['Data de Início'].map(parse_date), errors='coerce')
+    else:
+        result['_ordem_'] = pd.NaT
+    return result.sort_values('_ordem_', ascending=False, na_position='last').drop(columns=['_ordem_'])
+
+
 def new_task_id(ids):
     used = set(str(item) for item in ids)
     numbers = [int(m.group(1)) for item in used if (m := re.fullmatch(r'ACT-(\d+)', item))]
