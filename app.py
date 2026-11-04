@@ -161,13 +161,28 @@ def logout():
 
 
 def login_page():
-    a, mid, b = st.columns([1, 1.4, 1])
+    """Mantém a tela de entrada familiar aos clientes do painel anterior.
+
+    O papel continua sendo autorizado exclusivamente via hashes no Streamlit
+    Secrets; parâmetros de URL nunca autorizam o acesso.
+    """
+    st.markdown('<div style="height:1.5rem"></div>', unsafe_allow_html=True)
+    st.markdown(
+        '<h1 style="text-align:center;color:#4DA8DA">⚡ Mothé Engenharia</h1>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<h3 style="text-align:center;color:white">Acesso Restrito ao Cliente</h3>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<p style="text-align:center;color:#A8B2C1">'
+        'Por favor, insira a senha de acesso da unidade Transforma.'
+        '</p>',
+        unsafe_allow_html=True,
+    )
+    a, mid, b = st.columns([1, 1, 1])
     with mid:
-        st.write('')
-        st.write('')
-        header('Transforma | Engenharia',
-               'Gestão de contrato e acompanhamento técnico • Mothé Engenharia',
-               'ACESSO AO PAINEL')
         if demo_mode():
             st.info('Modo de avaliação: carregue seu próprio Excel e experimente os lançamentos sem alterar o Google Sheets. Os dados de teste duram apenas nesta sessão.')
             if st.button('Entrar na demonstração', type='primary', use_container_width=True):
@@ -182,9 +197,9 @@ def login_page():
         if st.session_state.get('login_errors', 0) >= 6:
             st.error('Muitas tentativas nesta sessão. Feche a aba e procure o administrador.')
             st.stop()
-        with st.form('login_form'):
-            pwd = st.text_input('Senha de acesso', type='password', placeholder='Digite sua senha')
-            send = st.form_submit_button('Entrar no painel', type='primary', use_container_width=True)
+        with st.form('login_form', border=False):
+            pwd = st.text_input('Senha de Acesso:', type='password')
+            send = st.form_submit_button('Entrar no Painel', use_container_width=True)
         if send:
             if verify_password(pwd, admin_hash):
                 st.session_state['role'] = 'admin'
@@ -195,7 +210,6 @@ def login_page():
                 st.error('Senha incorreta.')
                 st.stop()
             st.rerun()
-        st.caption('Acesso do cliente: consulta. Acesso administrativo: consulta e edição.')
     st.stop()
 
 
