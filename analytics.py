@@ -45,6 +45,24 @@ ALL_VISIT_COLUMNS = VISIT_COLUMNS + VISIT_EXTRA_COLUMNS
 VISIT_PURPOSES = ['Rotina', 'Atendimento emergencial', 'Acompanhamento técnico', 'Reunião/alinhamento', 'Levantamento/projeto', 'Outro']
 BASES = ['Macaé/RJ', 'Porto do Açu - São João da Barra/RJ',
          'Gradim - São Gonçalo/RJ', 'A definir']
+def base_filter_options(tasks=None, visits=None):
+    """Mostra todas as bases contratuais e também bases presentes apenas em ACT ou VIS.
+
+    Gradim deve permanecer selecionável mesmo sem lançamento histórico. Não
+    inventa atividades nem visitas para completar as opções.
+    """
+    configured = BASES[:-1]
+    observed = set()
+    for records in (tasks, visits):
+        if records is None or 'Base' not in records.columns:
+            continue
+        for value in records['Base'].dropna():
+            name = str(value).strip()
+            if name and name.casefold() not in {'nan', 'none', 'nat'}:
+                observed.add(name)
+    return configured + sorted(observed.difference(configured))
+
+
 STATUSES = [
     'Não Iniciado', 'Agendado', 'Em Andamento', 'Pausado',
     'Aguardando', 'Aguardando Cliente', 'Aguardando Aprovação', 'Aguardando Materiais',

@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from analytics import (
-    BASES, CATEGORIES, PHASES, PRIORITIES, STATUSES, CLOSED,
+    BASES, CATEGORIES, PHASES, PRIORITIES, STATUSES, CLOSED, base_filter_options,
     ALL_TASK_COLUMNS, TASK_EXTRA_COLUMNS, KIND_OPTIONS, ACT_KIND_OPTIONS, WAITING_STATUSES, DEADLINE_KINDS,
     display_status, effective_closed, ALL_VISIT_COLUMNS, VISIT_PURPOSES,
     delivery_frame, delivery_overview, is_radar, activity_only_frame,
@@ -257,8 +257,17 @@ with st.sidebar:
     st.divider()
     st.markdown('**🔎 Buscar e filtrar**')
     search = st.text_input('Buscar', placeholder='ID, descrição, local, pendência...', key='search_sidebar')
-    base_opts = sorted([b for b in tasks['Base'].unique() if b])
-    bases = st.multiselect('Base/unidade', base_opts, default=base_opts, key='base_sidebar')
+    # Opções não dependem apenas de ACT: o Açu pode ter somente registros VIS
+    # e o Gradim faz parte do contrato mesmo sem lançamentos históricos.
+    base_opts = base_filter_options(tasks, visits)
+    # Nova chave evita reaproveitar a seleção antiga de apenas Macaé ao atualizar.
+    bases = st.multiselect(
+        'Base/unidade', base_opts, default=base_opts,
+        key='base_sidebar_contract_v6',
+        help='Inclui as unidades do contrato e bases registradas em atividades ACT ou visitas VIS. '
+             'Os filtros de tipo, status e prioridade se aplicam às atividades; '
+             'a contagem contratual de visitas é global.'
+    )
     kind_opts = sorted([k for k in tasks['Tipo de Registro'].unique() if k])
     kinds = st.multiselect('Tipo de registro', kind_opts, default=kind_opts, key='kind_sidebar')
     status_opts = sorted([x for x in tasks['Status'].unique() if x])
