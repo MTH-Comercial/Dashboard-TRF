@@ -3,10 +3,11 @@ from __future__ import annotations
 import csv
 import os
 import io
+import re
 from pathlib import Path
 import gspread
 import streamlit as st
-from analytics import TASK_COLUMNS, TASK_EXTRA_COLUMNS, ALL_TASK_COLUMNS, DIARY_COLUMNS, VISIT_COLUMNS, ALL_VISIT_COLUMNS, VISIT_EXTRA_COLUMNS, visit_purpose, ACT_KIND_OPTIONS, VISIT_TASK_KINDS, new_task_id, today_brazil, task_frame, visits_from_tasks
+from analytics import TASK_COLUMNS, TASK_EXTRA_COLUMNS, ALL_TASK_COLUMNS, DIARY_COLUMNS, VISIT_COLUMNS, ALL_VISIT_COLUMNS, VISIT_EXTRA_COLUMNS, visit_purpose, ACT_KIND_OPTIONS, VISIT_TASK_KINDS, new_task_id, today_brazil, task_frame, visits_from_tasks, parse_date
 from security import safe_user_entry
 
 DEFAULT_SHEET_ID = '1_KEm7fLJpglz89vG-67hXIKrWOVSpcEkUXNILbSF1QE'  # Base V6 privada, na pasta 04 Transforma (R.R)
@@ -170,23 +171,93 @@ def ensure_task_headers(ws):
     return [str(x).strip() for x in ws.row_values(1)]
 
 
+DATE_COLUMNS = {'Data de Início', 'Data da Visita', 'Previsão de Conclusão', 'Data da Atualização'}
+
+
+def _sheet_value(column, value):
+    """Normaliza novas datas para texto ISO, como o histórico original da V6."""
+    raw = str(value or '').strip()
+    if column in DATE_COLUMNS and raw:
+        parsed = parse_date(value)
+        if parsed:
+            return parsed.isoformat()
+    return safe_user_entry(value)
+
+
+def _append_formatted_row(ws, headers, data):
+    """Novo registro com o mesmo estilo da aba e filtros abrangendo a nova linha."""
+    row = [_sheet_value(col, data.get(col, '')) for col in headers]
+    end_col = re.match(r'[A-Z]+', gspread.utils.rowcol_to_a1(1, len(headers))).group(0)
+    result = ws.append_row(row, value_input_option='RAW', table_range=f'A:{end_col}')
+    try:
+        saved_range = result.get('updates', {}).get('updatedRange', '')
+        match = re.search(r'[A-Z]+(\d+)(?::[A-Z]+\d+)?$', saved_range)
+        if not match:
+            raise RuntimeError(f'A API não informou onde gravou o registro: {saved_range}')
+        number = int(match.group(1))
+        sheet_id = ws.id
+        changes = []
+        if number > 2:
+            changes.append({'copyPaste': {
+                'source': {'sheetId': sheet_id, 'startRowIndex': 1,
+                           'endRowIndex': 2, 'startColumnIndex': 0,
+                           'endColumnIndex': len(headers)},
+                'destination': {'sheetId': sheet_id,
+                                'startRowIndex': number - 1,
+                                'endRowIndex': number,
+                                'startColumnIndex': 0,
+                                'endColumnIndex': len(headers)},
+                'pasteType': 'PASTE_FORMAT',
+                'pasteOrientation': 'NORMAL'}})
+        else:
+            changes.append({'repeatCell': {
+                'range': {'sheetId': sheet_id, 'startRowIndex': number - 1,
+                          'endRowIndex': number, 'startColumnIndex': 0,
+                          'endColumnIndex': len(headers)},
+                'cell': {'userEnteredFormat': {'wrapStrategy': 'WRAP',
+                                              'verticalAlignment': 'TOP',
+                                              'textFormat': {'fontSize': 10}}},
+                'fields': 'userEnteredFormat(wrapStrategy,verticalAlignment,textFormat)'}})
+        changes.append({'autoResizeDimensions': {
+            'dimensions': {'sheetId': sheet_id, 'dimension': 'ROWS',
+                           'startIndex': number - 1, 'endIndex': number}}})
+        metadata = ws.spreadsheet.fetch_sheet_metadata(
+            params={'fields': 'sheets(properties(sheetId),basicFilter)'})
+        for sh in metadata.get('sheets', []):
+            if sh.get('properties', {}).get('sheetId') != sheet_id:
+                continue
+            current_filter = sh.get('basicFilter')
+            if current_filter and current_filter.get('range', {}).get('endRowIndex', 0) < number:
+                extended = dict(current_filter)
+                extended['range'] = {**extended['range'], 'endRowIndex': number}
+                changes.append({'setBasicFilter': {'filter': extended}})
+            break
+        ws.spreadsheet.batch_update({'requests': changes})
+    except Exception as exc:
+        clear_data_cache()
+        raise RuntimeError(
+            'Registro gravado no Google Sheets, mas houve falha ao formatar a linha. '
+            'Não salve novamente: atualize a tela para não duplicar o lançamento. '
+            f'Detalhe técnico: {exc}') from exc
+    return result
+
+
 def _write_values(ws, row_num, old, new, columns):
-    """Escreve somente células alteradas, sem regravar as demais colunas."""
+    """Altera apenas os campos modificados, com datas consistentes e sem fórmulas."""
     changes = []
     headers = [str(x).strip() for x in ws.row_values(1)]
     for col in columns:
         if col not in headers:
             continue
         index = headers.index(col) + 1
-        before = str(old.get(col, '')).strip()
-        after = str(new.get(col, '')).strip()
+        before = _sheet_value(col, old.get(col, '')).strip()
+        after = _sheet_value(col, new.get(col, '')).strip()
         if before != after:
-            address = f'{gspread.utils.rowcol_to_a1(row_num, index)}'
-            changes.append({'range': address, 'values': [[safe_user_entry(after)]]})
+            address = gspread.utils.rowcol_to_a1(row_num, index)
+            changes.append({'range': address, 'values': [[after]]})
     if changes:
-        ws.batch_update(changes, value_input_option='USER_ENTERED')
+        ws.batch_update(changes, value_input_option='RAW')
     return len(changes)
-
 
 def create_task(values):
     # Registros VIS são exclusivos da aba de visitas; impedir ACT duplicado.
@@ -205,8 +276,7 @@ def create_task(values):
     recs = read_records(ws, ALL_TASK_COLUMNS, required=TASK_COLUMNS)
     task_id = new_task_id([r['ID da Tarefa'] for r in recs])
     data = dict(values, **{'ID da Tarefa': task_id})
-    row = [safe_user_entry(data.get(c, '')) if c in ALL_TASK_COLUMNS else '' for c in headers]
-    ws.append_row(row, value_input_option='USER_ENTERED')
+    _append_formatted_row(ws, headers, data)
     clear_data_cache()
     return task_id
 
@@ -265,10 +335,7 @@ def add_diary_and_update(row_values, update_current=False, waiting_reason=None):
     for r in existing:
         if all(str(r.get(k,'')).strip() == str(row_values.get(k,'')).strip() for k in DIARY_COLUMNS):
             raise ValueError('Esse relato idêntico já existe no diário de bordo.')
-    ws_diary.append_row(
-        [safe_user_entry(row_values.get(c, '')) for c in DIARY_COLUMNS],
-        value_input_option='USER_ENTERED', table_range='A:E',
-    )
+    _append_formatted_row(ws_diary, DIARY_COLUMNS, row_values)
     if update_current:
         new = dict(live_task)
         new['Fase'] = row_values['Fase Atualizada']
@@ -424,8 +491,7 @@ def add_visit(data):
     visit_id = f'VIS-{max(ids, default=0)+1:04d}'
     data = dict(data, **{'ID da Visita': visit_id})
     headers=ensure_visit_headers(ws)
-    row=[safe_user_entry(data.get(col,'')) for col in headers]
-    ws.append_row(row, value_input_option='USER_ENTERED', table_range='A:K')
+    _append_formatted_row(ws, headers, data)
     clear_data_cache()
     return visit_id
 
