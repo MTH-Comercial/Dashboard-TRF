@@ -674,7 +674,10 @@ def admin_new_task():
         priority=b.selectbox('Prioridade',PRIORITIES)
         status=c.selectbox('Situação atual',STATUSES,index=0)
         has_deadline=st.checkbox('Informar prazo de conclusão?',value=False)
-        deadline=st.date_input('Previsão de conclusão',today,format='DD/MM/YYYY',disabled=not has_deadline)
+        # Em st.form, o checkbox não provoca rerun. Não bloquear o calendário:
+        # caso contrário, marcar "Informar prazo" só habilita o campo após enviar.
+        deadline=st.date_input('Previsão de conclusão',today,format='DD/MM/YYYY',
+                               help='Escolha a data aqui; ela só será gravada quando Informar prazo de conclusão estiver marcado.')
         deadline_kind=st.selectbox('Natureza da data / compromisso',DEADLINE_KINDS,index=0,
             help='Estimativa não é promessa. Só Compromisso confirmado entra no indicador de atraso contratual.')
         waiting_reason=st.text_area('Dependência externa / motivo da espera (opcional)',height=75)
@@ -727,7 +730,9 @@ def admin_edit_task():
         with b: priority=choice('Prioridade',PRIORITIES,row['Prioridade'])
         with c: status=choice('Status',STATUSES,row['Status'])
         has_deadline=st.checkbox('Tem previsão de conclusão?',value=bool(parse_date(row['Previsão de Conclusão'])))
-        deadline=st.date_input('Previsão de conclusão',date_value(row['Previsão de Conclusão']),format='DD/MM/YYYY',disabled=not has_deadline)
+        # Mesmo motivo: dentro do formulário o checkbox só é processado no envio.
+        deadline=st.date_input('Previsão de conclusão',date_value(row['Previsão de Conclusão']),format='DD/MM/YYYY',
+                               help='A data só será salva se Tem previsão de conclusão estiver marcado.')
         with st.container():
             deadline_kind=choice('Natureza do prazo',DEADLINE_KINDS,row['Condição do Prazo'])
         waiting_reason=st.text_area('Dependência externa / motivo da espera',value=row['Motivo de Espera'],height=85)
