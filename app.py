@@ -949,8 +949,7 @@ def render_admin():
         st.warning('Edição indisponível até configurar a conta Google Sheets em Streamlit Secrets.')
         admin_quality()
         return
-    # Um único menu: os antigos atalhos "Lançar trabalho do dia" repetiam
-    # estas mesmas funções, gerando dúvida sobre onde os dados eram salvos.
+    # Um único menu de operações para evitar repetição de opções e caminhos.
     admin_pages = ['📝 Registrar andamento ACT', '＋ Nova atividade ACT',
                    '✎ Editar cadastro ACT', '◉ Registrar visita VIS',
                    '✓ Conferência / Exportação']
