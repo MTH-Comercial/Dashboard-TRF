@@ -938,21 +938,6 @@ def admin_quality():
                       file_name='transforma_diario.csv',mime='text/csv',use_container_width=True)
 
 
-def admin_today():
-    st.markdown('### 📝 Lançar o trabalho realizado no dia')
-    st.caption('Atualize um serviço ACT, cadastre uma nova atividade ACT ou registre a presença/relato de campo como visita VIS. Não é necessário criar ACT para acompanhar uma visita.')
-    action = st.radio('O trabalho é de uma atividade já cadastrada?',
-                      ['Atualizar atividade ACT', 'Cadastrar nova atividade ACT', 'Registrar visita VIS'],
-                      key='admin_today_kind')
-    st.divider()
-    if action == 'Atualizar atividade ACT':
-        admin_diary()
-    elif action == 'Cadastrar nova atividade ACT':
-        admin_new_task()
-    else:
-        admin_visit()
-
-
 def render_admin():
     header('Central de gestão',
            'Registre o trabalho do dia e acompanhe as demandas sem abrir a planilha.',
@@ -964,16 +949,20 @@ def render_admin():
         st.warning('Edição indisponível até configurar a conta Google Sheets em Streamlit Secrets.')
         admin_quality()
         return
-    admin_pages = ['📝 Lançar trabalho do dia', '＋ Nova atividade', '✎ Editar atividade',
-                   '▤ Atualizações', '◉ Registrar visita', '✓ Conferência / Exportação']
+    # Um único menu: os antigos atalhos "Lançar trabalho do dia" repetiam
+    # estas mesmas funções, gerando dúvida sobre onde os dados eram salvos.
+    admin_pages = ['📝 Registrar andamento ACT', '＋ Nova atividade ACT',
+                   '✎ Editar cadastro ACT', '◉ Registrar visita VIS',
+                   '✓ Conferência / Exportação']
+    st.caption('Registrar andamento acrescenta um relato ao histórico da atividade; '
+               'editar cadastro altera os dados da ficha. Visitas recebem ID VIS.')
     action = st.radio('Escolha uma operação', admin_pages, horizontal=True,
                       label_visibility='collapsed', key='admin_action')
     st.write('')
-    if action == admin_pages[0]: admin_today()
+    if action == admin_pages[0]: admin_diary()
     elif action == admin_pages[1]: admin_new_task()
     elif action == admin_pages[2]: admin_edit_task()
-    elif action == admin_pages[3]: admin_diary()
-    elif action == admin_pages[4]: admin_visit()
+    elif action == admin_pages[3]: admin_visit()
     else: admin_quality()
 
 if page=='Visão executiva':
