@@ -349,6 +349,81 @@ def delivery_overview(tasks, today=None):
     }
 
 
+
+def technical_activities_by_subarea(tasks):
+    """Distribuição por quantidade de ACT técnicos, não por horas trabalhadas.
+
+    Visitas VIS, reuniões ACT e demandas no radar ficam fora do indicador
+    para não ampliar artificialmente o volume de entregas por área.
+    """
+    columns = ['Subárea', 'Situação', 'Quantidade']
+    deliveries = delivery_frame(tasks)
+    if deliveries.empty:
+        return pd.DataFrame(columns=columns)
+    grouped = deliveries.copy()
+    grouped['Subárea'] = grouped['Subárea'].astype(str).str.strip()
+    grouped['Subárea'] = grouped['Subárea'].replace('', 'Não informada')
+
+    def state(status):
+        if status in CLOSED:
+            return 'Concluídas'
+        if status in WAITING_STATUSES:
+            return 'Aguardando/bloqueadas'
+        if status == 'Em Andamento':
+            return 'Em execução'
+        return 'Outras situações'
+
+    grouped['Situação'] = grouped['Status'].map(state)
+    return (grouped.groupby(['Subárea', 'Situação'], as_index=False)
+            .size().rename(columns={'size': 'Quantidade'}))
+
+
+def latest_update_conflicts(tasks, diary):
+    """Identifica divergência entre ficha ACT e ÚLTIMO lançamento do histórico.
+
+    Retorna avisos para conferência, sem alterar a ficha automaticamente.
+    A ficha pode ter sido editada depois do diário; sem carimbo temporal
+    dessas edições, é inseguro substituir o estado atual só pelo histórico.
+    """
+    columns = ['ID da Tarefa', 'Descrição', 'Status na ficha',
+               'Status na última atualização', 'Fase na ficha',
+               'Fase na última atualização', 'Data da atualização']
+    if tasks.empty or diary.empty:
+        return pd.DataFrame(columns=columns)
+
+    events = diary[diary['ID da Tarefa'].astype(str).str.strip().ne('')].copy()
+    if events.empty:
+        return pd.DataFrame(columns=columns)
+    events['_date'] = events['Data da Atualização'].map(
+        lambda val: parse_date(val) or date.min)
+    events['_position'] = range(len(events))
+    latest = (events.sort_values(['_date', '_position'], kind='stable')
+              .groupby('ID da Tarefa', sort=False).tail(1))
+    lookup = latest.set_index('ID da Tarefa')
+    differences = []
+    for _, task in tasks.iterrows():
+        task_id = str(task.get('ID da Tarefa', '')).strip()
+        if task_id not in lookup.index:
+            continue
+        update = lookup.loc[task_id]
+        status_main = str(task.get('Status', '')).strip()
+        phase_main = str(task.get('Fase', '')).strip()
+        status_last = str(update.get('Status Atualizado', '')).strip()
+        phase_last = str(update.get('Fase Atualizada', '')).strip()
+        if status_main == status_last and phase_main == phase_last:
+            continue
+        differences.append({
+            'ID da Tarefa': task_id,
+            'Descrição': str(task.get('Descrição', '')),
+            'Status na ficha': status_main,
+            'Status na última atualização': status_last,
+            'Fase na ficha': phase_main,
+            'Fase na última atualização': phase_last,
+            'Data da atualização': str(update.get('Data da Atualização', '')),
+        })
+    return pd.DataFrame(differences, columns=columns)
+
+
 def quality_issues(tasks):
     """Somente problemas reais de cadastro, nunca transições históricas de fase/status."""
     issues=[]
