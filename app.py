@@ -14,8 +14,7 @@ from analytics import (
     BASES, CATEGORIES, PHASES, PRIORITIES, STATUSES, CLOSED, base_filter_options,
     ALL_TASK_COLUMNS, TASK_EXTRA_COLUMNS, KIND_OPTIONS, ACT_KIND_OPTIONS, WAITING_STATUSES, DEADLINE_KINDS,
     display_status, effective_closed, ALL_VISIT_COLUMNS, VISIT_PURPOSES,
-    delivery_frame, delivery_overview, technical_activities_by_subarea,
-    latest_update_conflicts, is_radar, activity_only_frame,
+    delivery_frame, delivery_overview, is_radar, activity_only_frame,
     TASK_COLUMNS, DIARY_COLUMNS, VISIT_COLUMNS, ALL_VISIT_COLUMNS,
     contract_metrics, contract_window, diary_frame, format_date,
     location_group, pct, quality_issues, task_frame, task_metrics,
@@ -28,6 +27,68 @@ from storage import (
     initialize_visits_from_tasks, load_all, secret, update_task, update_visit,
     clear_data_cache, demo_replace_dataset,
 )
+
+# As métricas novas ficam locais à interface para não impedir o login
+# quando uma implantação do Streamlit Cloud usa um módulo de analytics
+# ainda em cache. Imports de símbolos novos não podem derrubar o painel.
+def technical_activities_by_subarea(tasks):
+    """Conta entregas ACT únicas por subárea, sem visitas ou reuniões."""
+    columns = ['Subárea', 'Situação', 'Quantidade']
+    deliveries = delivery_frame(tasks)
+    if deliveries.empty:
+        return pd.DataFrame(columns=columns)
+    frame = deliveries.copy()
+    frame['Subárea'] = frame['Subárea'].astype(str).str.strip().replace('', 'Não informada')
+
+    def classification(status):
+        if status in CLOSED:
+            return 'Concluídas'
+        if status in WAITING_STATUSES:
+            return 'Aguardando/bloqueadas'
+        if status == 'Em Andamento':
+            return 'Em execução'
+        return 'Outras situações'
+
+    frame['Situação'] = frame['Status'].map(classification)
+    return (frame.groupby(['Subárea','Situação'], as_index=False)
+            .size().rename(columns={'size':'Quantidade'}))
+
+
+def latest_update_conflicts(tasks, diary):
+    """Divergências para auditoria manual; nunca reescreve dados do histórico."""
+    columns = ['ID da Tarefa', 'Descrição', 'Status na ficha',
+               'Status na última atualização', 'Fase na ficha',
+               'Fase na última atualização', 'Data da atualização']
+    if tasks.empty or diary.empty:
+        return pd.DataFrame(columns=columns)
+    events = diary[diary['ID da Tarefa'].astype(str).str.strip().ne('')].copy()
+    if events.empty:
+        return pd.DataFrame(columns=columns)
+    events['_date'] = events['Data da Atualização'].map(
+        lambda v: parse_date(v) or date.min)
+    events['_position'] = range(len(events))
+    latest = events.sort_values(['_date','_position'],kind='stable').groupby(
+        'ID da Tarefa',sort=False).tail(1).set_index('ID da Tarefa')
+    issues=[]
+    for _, task in tasks.iterrows():
+        tid=str(task.get('ID da Tarefa','')).strip()
+        if tid not in latest.index:
+            continue
+        upd=latest.loc[tid]
+        status=str(task.get('Status','')).strip()
+        phase=str(task.get('Fase','')).strip()
+        us=str(upd.get('Status Atualizado','')).strip()
+        up=str(upd.get('Fase Atualizada','')).strip()
+        if status==us and phase==up:
+            continue
+        issues.append({
+            'ID da Tarefa':tid, 'Descrição':str(task.get('Descrição','')),
+            'Status na ficha':status, 'Status na última atualização':us,
+            'Fase na ficha':phase, 'Fase na última atualização':up,
+            'Data da atualização':str(upd.get('Data da Atualização','')),
+        })
+    return pd.DataFrame(issues,columns=columns)
+
 
 st.set_page_config(
     page_title='Transforma | Painel de Engenharia', page_icon='⚡',
