@@ -14,7 +14,8 @@ from analytics import (
     BASES, CATEGORIES, PHASES, PRIORITIES, STATUSES, CLOSED, base_filter_options,
     ALL_TASK_COLUMNS, TASK_EXTRA_COLUMNS, KIND_OPTIONS, ACT_KIND_OPTIONS, WAITING_STATUSES, DEADLINE_KINDS,
     display_status, effective_closed, ALL_VISIT_COLUMNS, VISIT_PURPOSES,
-    delivery_frame, delivery_overview, is_radar, activity_only_frame,
+    delivery_frame, delivery_overview, technical_activities_by_subarea,
+    latest_update_conflicts, is_radar, activity_only_frame,
     TASK_COLUMNS, DIARY_COLUMNS, VISIT_COLUMNS, ALL_VISIT_COLUMNS,
     contract_metrics, contract_window, diary_frame, format_date,
     location_group, pct, quality_issues, task_frame, task_metrics,
@@ -123,13 +124,17 @@ def compact_table(data, *, key='', height=237):
     if date_col in order.columns:
         order = order.sort_values(date_col, ascending=False, na_position='last')
     order['Situação'] = order.apply(lambda r: display_status(r.get('Tipo de Registro',''),r.get('Status','')),axis=1)
-    use = ['ID da Tarefa','Descrição','Base','Situação']
-    if 'Motivo de Espera' in order.columns and key == 'prioridades':
-        use += ['Motivo de Espera']
-    st.dataframe(order[use].rename(columns={'ID da Tarefa':'ID','Motivo de Espera':'Dependência'}),
+    # Prioridades mostram situação atual sem depender de rolagem horizontal.
+    use = (['ID da Tarefa', 'Descrição', 'Situação']
+           if key == 'prioridades' else ['ID da Tarefa', 'Descrição', 'Base'])
+    st.dataframe(order[use].rename(columns={'ID da Tarefa':'ID'}),
                  hide_index=True, use_container_width=True, height=height,
-                 column_config={'Descrição':st.column_config.TextColumn(width='large'),
-                                'Dependência':st.column_config.TextColumn(width='medium')})
+                 column_config={
+                     'ID': st.column_config.TextColumn(width='small'),
+                     'Descrição': st.column_config.TextColumn(width='large'),
+                     'Situação': st.column_config.TextColumn(width='small'),
+                     'Base': st.column_config.TextColumn(width='small'),
+                 })
 
 
 def style_figure(fig, height=350):
@@ -480,6 +485,42 @@ def render_executive():
         opened=delivery_frame(filtered)
         opened=opened[~opened['Status'].isin(CLOSED)]
         compact_table(opened,key='prioridades')
+
+    st.markdown('### Atividades técnicas por subárea')
+    st.caption('Concentração dos serviços de engenharia — quantidade de ACT por subárea, separada por situação atual.')
+    area_data = technical_activities_by_subarea(filtered)
+    if area_data.empty:
+        st.info('Nenhuma atividade técnica para os filtros atuais.')
+    else:
+        totals = area_data.groupby('Subárea')['Quantidade'].sum().sort_values()
+        chart = px.bar(
+            area_data, x='Quantidade', y='Subárea', color='Situação',
+            orientation='h', text='Quantidade', barmode='stack',
+            color_discrete_map={
+                'Concluídas': '#35C99A',
+                'Em execução': '#35A8E9',
+                'Aguardando/bloqueadas': '#F7B955',
+                'Outras situações': '#A69BE9',
+            },
+            category_orders={'Situação': [
+                'Concluídas', 'Em execução', 'Aguardando/bloqueadas',
+                'Outras situações']},
+        )
+        chart.update_yaxes(categoryorder='array', categoryarray=totals.index.tolist())
+        chart.update_traces(textposition='inside', textfont_size=12,
+                            hovertemplate='%{y}: %{x} registro(s)<extra>%{fullData.name}</extra>')
+        chart.update_layout(xaxis_title='Quantidade de atividades ACT',
+                            yaxis_title='', legend=dict(orientation='h',
+                            yanchor='bottom', y=1.01, xanchor='left', x=0))
+        st.plotly_chart(style_figure(chart, max(310, 52 * len(totals) + 95)),
+                        use_container_width=True)
+        st.caption(
+            f'{int(totals.sum())} atividades técnicas distribuídas em '
+            f'{len(totals)} subáreas. O gráfico mede registros, NÃO horas ou '
+            'duração dos serviços. A classificação “Geral” indica tarefas '
+            'ainda sem uma subárea específica e pode ser refinada no cadastro.'
+        )
+
     with st.expander('Detalhamento: finalidades das visitas VIS e outras ações', expanded=False):
         subcols=st.columns(4)
         for col,(label,value,note) in zip(subcols,[
@@ -771,7 +812,14 @@ def admin_diary():
         with b: status=choice('Status após esta atualização',STATUSES,t['Status'])
         text=st.text_area('O que aconteceu? Decisões, ações, próximos passos e pendências',height=180)
         waiting_reason=st.text_area('Dependência / bloqueio (se houver)',value=t['Motivo de Espera'],height=80,help='Ex.: aguardando cotação do fornecedor. Atualiza a ficha quando a sincronização está marcada.')
-        sync=st.checkbox('Atualizar também fase e status na atividade',value=True)
+        sync=st.checkbox(
+            'Sincronizar fase e status da ficha ACT com este lançamento',
+            value=True,
+            help='Mantenha marcado ao registrar o andamento atual: assim as '
+                 'prioridades e os KPIs refletem a nova situação. Desmarque '
+                 'somente para incluir um relato histórico sem mudar o estado '
+                 'atual da atividade.'
+        )
         submit=st.form_submit_button('Salvar no diário de bordo',type='primary',use_container_width=True)
     if submit:
         if not text.strip():
@@ -903,6 +951,18 @@ def admin_quality():
     else:
         st.success('Nenhuma inconsistência de cadastro ACT foi encontrada pelas verificações atuais.')
     st.caption('A verificação acima analisa os cadastros ACT. O histórico de fases/status de uma atividade é normal e não é considerado erro.')
+    conflicts = latest_update_conflicts(tasks, diary)
+    st.markdown('##### Situação atual × última atualização registrada')
+    if conflicts.empty:
+        st.success('As fichas ACT com histórico estão coerentes com sua última atualização registrada.')
+    else:
+        st.warning(
+            f'{len(conflicts)} ficha(s) apresentam fase ou status diferente da '
+            'última atualização do histórico. Isso merece conferência: uma '
+            'edição posterior na ficha pode ser legítima. Compare os registros '
+            'antes de corrigir e não altere o histórico antigo.'
+        )
+        st.dataframe(conflicts, hide_index=True, use_container_width=True)
     if not visits.empty and 'Validação' in visits.columns:
         st.markdown('##### Conferência de visitas históricas (VIS)')
         states = visits['Validação'].astype(str).str.strip().str.casefold()
