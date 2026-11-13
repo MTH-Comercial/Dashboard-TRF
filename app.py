@@ -32,15 +32,32 @@ from storage import (
 # quando uma implantação do Streamlit Cloud usa um módulo de analytics
 # ainda em cache. Imports de símbolos novos não podem derrubar o painel.
 def technical_activities_by_subarea(tasks):
-    """Conta entregas ACT únicas por subárea, sem visitas ou reuniões."""
-    columns = ['Subárea', 'Situação', 'Quantidade']
+    """Agrupa ACT técnicas por subárea de Macaé ou por unidade fora de Macaé.
+
+    Porto do Açu e Gradim aparecem cada um como uma única linha, mesmo que
+    suas atividades tenham subáreas distintas. VIS, reuniões e radar não entram.
+    A função respeita as atividades já filtradas pela interface.
+    """
+    columns = ['Local', 'Situação', 'Quantidade']
     deliveries = delivery_frame(tasks)
     if deliveries.empty:
         return pd.DataFrame(columns=columns)
-    frame = deliveries.copy()
-    frame['Subárea'] = frame['Subárea'].astype(str).str.strip().replace('', 'Não informada')
+    grouped = deliveries.copy()
 
-    def classification(status):
+    def location_label(row):
+        base = str(row.get('Base', '') or '').strip()
+        lower_base = base.casefold()
+        if lower_base.startswith(('porto do açu', 'porto do acu')):
+            return 'Porto do Açu'
+        if lower_base.startswith('gradim'):
+            return 'Gradim'
+        if lower_base.startswith(('macaé', 'macae')):
+            area = str(row.get('Subárea', '') or '').strip()
+            return area if area and area.casefold() not in ('nan', 'none', 'nat') else 'Não informada'
+        # Evita misturar tarefas de outras bases em subáreas de Macaé.
+        return base if base and lower_base not in ('nan', 'none', 'nat') else 'Base não informada'
+
+    def state(status):
         if status in CLOSED:
             return 'Concluídas'
         if status in WAITING_STATUSES:
@@ -49,9 +66,10 @@ def technical_activities_by_subarea(tasks):
             return 'Em execução'
         return 'Outras situações'
 
-    frame['Situação'] = frame['Status'].map(classification)
-    return (frame.groupby(['Subárea','Situação'], as_index=False)
-            .size().rename(columns={'size':'Quantidade'}))
+    grouped['Local'] = grouped.apply(location_label, axis=1)
+    grouped['Situação'] = grouped['Status'].map(state)
+    return (grouped.groupby(['Local', 'Situação'], as_index=False)
+            .size().rename(columns={'size': 'Quantidade'}))
 
 
 def latest_update_conflicts(tasks, diary):
@@ -547,15 +565,15 @@ def render_executive():
         opened=opened[~opened['Status'].isin(CLOSED)]
         compact_table(opened,key='prioridades')
 
-    st.markdown('### Atividades técnicas por subárea')
-    st.caption('Concentração dos serviços de engenharia — quantidade de ACT por subárea, separada por situação atual.')
+    st.markdown('### Atividades técnicas por setor e unidade')
+    st.caption('Macaé: atividades por subárea. Porto do Açu e Gradim: total por unidade, independentemente da subárea. Cores representam a situação atual.')
     area_data = technical_activities_by_subarea(filtered)
     if area_data.empty:
         st.info('Nenhuma atividade técnica para os filtros atuais.')
     else:
-        totals = area_data.groupby('Subárea')['Quantidade'].sum().sort_values()
+        totals = area_data.groupby('Local')['Quantidade'].sum().sort_values()
         chart = px.bar(
-            area_data, x='Quantidade', y='Subárea', color='Situação',
+            area_data, x='Quantidade', y='Local', color='Situação',
             orientation='h', text='Quantidade', barmode='stack',
             color_discrete_map={
                 'Concluídas': '#35C99A',
@@ -577,9 +595,9 @@ def render_executive():
                         use_container_width=True)
         st.caption(
             f'{int(totals.sum())} atividades técnicas distribuídas em '
-            f'{len(totals)} subáreas. O gráfico mede registros, NÃO horas ou '
-            'duração dos serviços. A classificação “Geral” indica tarefas '
-            'ainda sem uma subárea específica e pode ser refinada no cadastro.'
+            f'{len(totals)} setores/unidades. O gráfico mede registros, NÃO horas ou '
+            'duração dos serviços. Em Macaé, a classificação “Geral” indica tarefas '
+            'ainda sem uma subárea específica. Porto do Açu e Gradim são mostrados por base.'
         )
 
     with st.expander('Detalhamento: finalidades das visitas VIS e outras ações', expanded=False):

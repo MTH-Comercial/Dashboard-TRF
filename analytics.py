@@ -351,18 +351,30 @@ def delivery_overview(tasks, today=None):
 
 
 def technical_activities_by_subarea(tasks):
-    """Distribuição por quantidade de ACT técnicos, não por horas trabalhadas.
+    """Agrupa ACT técnicas por subárea de Macaé ou por unidade fora de Macaé.
 
-    Visitas VIS, reuniões ACT e demandas no radar ficam fora do indicador
-    para não ampliar artificialmente o volume de entregas por área.
+    Porto do Açu e Gradim aparecem cada um como uma única linha, mesmo que
+    suas atividades tenham subáreas distintas. VIS, reuniões e radar não entram.
+    A função respeita as atividades já filtradas pela interface.
     """
-    columns = ['Subárea', 'Situação', 'Quantidade']
+    columns = ['Local', 'Situação', 'Quantidade']
     deliveries = delivery_frame(tasks)
     if deliveries.empty:
         return pd.DataFrame(columns=columns)
     grouped = deliveries.copy()
-    grouped['Subárea'] = grouped['Subárea'].astype(str).str.strip()
-    grouped['Subárea'] = grouped['Subárea'].replace('', 'Não informada')
+
+    def location_label(row):
+        base = str(row.get('Base', '') or '').strip()
+        lower_base = base.casefold()
+        if lower_base.startswith(('porto do açu', 'porto do acu')):
+            return 'Porto do Açu'
+        if lower_base.startswith('gradim'):
+            return 'Gradim'
+        if lower_base.startswith(('macaé', 'macae')):
+            area = str(row.get('Subárea', '') or '').strip()
+            return area if area and area.casefold() not in ('nan', 'none', 'nat') else 'Não informada'
+        # Evita misturar tarefas de outras bases em subáreas de Macaé.
+        return base if base and lower_base not in ('nan', 'none', 'nat') else 'Base não informada'
 
     def state(status):
         if status in CLOSED:
@@ -373,8 +385,9 @@ def technical_activities_by_subarea(tasks):
             return 'Em execução'
         return 'Outras situações'
 
+    grouped['Local'] = grouped.apply(location_label, axis=1)
     grouped['Situação'] = grouped['Status'].map(state)
-    return (grouped.groupby(['Subárea', 'Situação'], as_index=False)
+    return (grouped.groupby(['Local', 'Situação'], as_index=False)
             .size().rename(columns={'size': 'Quantidade'}))
 
 
